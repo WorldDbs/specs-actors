@@ -7,8 +7,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 
-	builtin3 "github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	verifreg3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/verifreg"
+	builtin3 "github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	verifreg3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/verifreg"
 )
 
 type verifregMigrator struct{}
