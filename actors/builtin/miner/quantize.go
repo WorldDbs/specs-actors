@@ -16,6 +16,15 @@ func (q QuantSpec) QuantizeUp(e abi.ChainEpoch) abi.ChainEpoch {
 	return quantizeUp(e, q.unit, q.offset)
 }
 
+func (q QuantSpec) QuantizeDown(e abi.ChainEpoch) abi.ChainEpoch {
+	next := q.QuantizeUp(e)
+	// QuantizeDown == QuantizeUp iff e is a fixed point of QuantizeUp
+	if e == next {
+		return next
+	}
+	return next - q.unit
+}
+
 var NoQuantization = NewQuantSpec(1, 0)
 
 // Rounds e to the nearest exact multiple of the quantization unit offset by
