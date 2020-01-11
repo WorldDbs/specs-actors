@@ -8,8 +8,8 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/dline"
 	miner2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	miner3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	miner3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 	cid "github.com/ipfs/go-cid"
 )
 
