@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/migration/nv10"
+	"github.com/filecoin-project/specs-actors/v4/actors/migration/nv10"
 )
 
 func TestParallelMigrationCalls(t *testing.T) {
