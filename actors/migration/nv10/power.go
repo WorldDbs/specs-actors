@@ -8,10 +8,10 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 
-	builtin3 "github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	power3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
-	adt3 "github.com/filecoin-project/specs-actors/v3/actors/util/adt"
-	smoothing3 "github.com/filecoin-project/specs-actors/v3/actors/util/smoothing"
+	builtin3 "github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	power3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	adt3 "github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	smoothing3 "github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
 )
 
 type powerMigrator struct{}
