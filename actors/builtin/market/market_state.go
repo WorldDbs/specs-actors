@@ -9,8 +9,8 @@ import (
 	"github.com/ipfs/go-cid"
 	xerrors "golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 const epochUndefined = abi.ChainEpoch(-1)
