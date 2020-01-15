@@ -6,8 +6,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 // DataCap is an integer number of bytes.
