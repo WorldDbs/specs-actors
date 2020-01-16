@@ -7,8 +7,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 
-	builtin3 "github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	multisig3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/multisig"
+	builtin3 "github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	multisig3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/multisig"
 )
 
 type multisigMigrator struct{}
