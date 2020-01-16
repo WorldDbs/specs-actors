@@ -10,15 +10,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v3/support/ipld"
-	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
-	vm "github.com/filecoin-project/specs-actors/v3/support/vm"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v4/support/ipld"
+	tutil "github.com/filecoin-project/specs-actors/v4/support/testing"
+	vm "github.com/filecoin-project/specs-actors/v4/support/vm"
 )
 
 func TestReplaceCommittedCapacitySectorWithDealLadenSector(t *testing.T) {
