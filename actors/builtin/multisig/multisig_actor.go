@@ -14,9 +14,9 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 type TxnID = multisig0.TxnID
