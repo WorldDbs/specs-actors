@@ -8,9 +8,9 @@ import (
 	"github.com/pkg/errors"
 
 	power2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
-	power3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	power3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
 )
 
 // MinerGenerator adds miner agents to the simulation at a configured rate.
