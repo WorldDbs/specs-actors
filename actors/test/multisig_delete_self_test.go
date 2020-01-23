@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	init_ "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/v4/support/ipld"
-	vm "github.com/filecoin-project/specs-actors/v4/support/vm"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	init_ "github.com/filecoin-project/specs-actors/v5/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v5/support/ipld"
+	"github.com/filecoin-project/specs-actors/v5/support/vm"
 )
 
 func TestMultisigDeleteSelf2Of3RemovedIsProposer(t *testing.T) {
@@ -64,8 +64,8 @@ func TestMultisigDeleteSelf2Of3RemovedIsProposer(t *testing.T) {
 	vm.ApplyOk(t, v, addrs[1], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
 
 	// txnid not found when third approval gets processed indicating that the transaction has gone through successfully
-	_, code := v.ApplyMessage(addrs[2], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
-	assert.Equal(t, exitcode.ErrNotFound, code)
+	result := v.ApplyMessage(addrs[2], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
+	assert.Equal(t, exitcode.ErrNotFound, result.Code)
 
 }
 
@@ -115,8 +115,8 @@ func TestMultisigDeleteSelf2Of3RemovedIsApprover(t *testing.T) {
 	vm.ApplyOk(t, v, addrs[0], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
 
 	// txnid not found when third approval gets processed indicating that the transaction has gone through successfully
-	_, code := v.ApplyMessage(addrs[2], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
-	assert.Equal(t, exitcode.ErrNotFound, code)
+	result := v.ApplyMessage(addrs[2], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
+	assert.Equal(t, exitcode.ErrNotFound, result.Code)
 
 }
 
@@ -165,8 +165,8 @@ func TestMultisigDeleteSelf2Of2(t *testing.T) {
 	vm.ApplyOk(t, v, addrs[1], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
 
 	// txnid not found when another approval gets processed indicating that the transaction has gone through successfully
-	_, code := v.ApplyMessage(addrs[1], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
-	assert.Equal(t, exitcode.ErrNotFound, code)
+	result := v.ApplyMessage(addrs[1], multisigAddr, big.Zero(), builtin.MethodsMultisig.Approve, &approveRemoveSignerParams)
+	assert.Equal(t, exitcode.ErrNotFound, result.Code)
 }
 
 func TestMultisigSwapsSelf2Of3(t *testing.T) {
