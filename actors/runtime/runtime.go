@@ -12,7 +12,7 @@ import (
 	"github.com/filecoin-project/go-state-types/rt"
 	cid "github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime/proof"
 )
 
 // Interfaces for the runtime.
@@ -182,6 +182,7 @@ type Syscalls interface {
 	VerifySeal(vi proof.SealVerifyInfo) error
 
 	BatchVerifySeals(vis map[addr.Address][]proof.SealVerifyInfo) (map[addr.Address][]bool, error)
+	VerifyAggregateSeals(aggregate proof.AggregateSealVerifyProofAndInfos) error
 
 	// Verifies a proof of spacetime.
 	VerifyPoSt(vi proof.WindowPoStVerifyInfo) error
