@@ -9,9 +9,9 @@ import (
 	reward0 "github.com/filecoin-project/specs-actors/actors/builtin/reward"
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/smoothing"
 )
 
 // PenaltyMultiplier is the factor miner penaltys are scaled up by
@@ -99,8 +99,7 @@ func (a Actor) AwardBlockReward(rt runtime.Runtime, params *AwardBlockRewardPara
 	var st State
 	rt.StateTransaction(&st, func() {
 		blockReward := big.Mul(st.ThisEpochReward, big.NewInt(params.WinCount))
-		//blockReward = big.Div(blockReward, big.NewInt(builtin.ExpectedLeadersPerEpoch))
-		blockReward = big.Div(big.Div(blockReward, big.NewInt(builtin.ExpectedLeadersPerEpoch)), big.NewInt(10))
+		blockReward = big.Div(blockReward, big.NewInt(builtin.ExpectedLeadersPerEpoch))
 		totalReward = big.Add(blockReward, params.GasReward)
 		currBalance := rt.CurrentBalance()
 		if totalReward.GreaterThan(currBalance) {
