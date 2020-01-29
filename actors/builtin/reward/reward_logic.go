@@ -4,7 +4,7 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/util/math"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/math"
 )
 
 // Baseline function = BaselineInitialValue * (BaselineExponent) ^(t), t in epochs
