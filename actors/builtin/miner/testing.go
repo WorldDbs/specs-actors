@@ -6,9 +6,9 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/util"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/util"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
 )
 
 type DealSummary struct {
@@ -757,23 +757,23 @@ func CheckMinerBalances(st *State, store adt.Store, balance abi.TokenAmount, acc
 func CheckPreCommits(st *State, store adt.Store, allocatedSectors map[uint64]bool, acc *builtin.MessageAccumulator) {
 	quant := st.QuantSpecEveryDeadline()
 
-	// invert pre-commit expiry queue into a lookup by sector number
-	expireEpochs := make(map[uint64]abi.ChainEpoch)
-	if expiryQ, err := LoadBitfieldQueue(store, st.PreCommittedSectorsExpiry, st.QuantSpecEveryDeadline(), PrecommitExpiryAmtBitwidth); err != nil {
-		acc.Addf("error loading pre-commit expiry queue: %v", err)
+	// invert pre-commit clean up queue into a lookup by sector number
+	cleanUpEpochs := make(map[uint64]abi.ChainEpoch)
+	if cleanUpQ, err := LoadBitfieldQueue(store, st.PreCommittedSectorsCleanUp, st.QuantSpecEveryDeadline(), PrecommitCleanUpAmtBitwidth); err != nil {
+		acc.Addf("error loading pre-commit clean up queue: %v", err)
 	} else {
-		err = expiryQ.ForEach(func(epoch abi.ChainEpoch, bf bitfield.BitField) error {
+		err = cleanUpQ.ForEach(func(epoch abi.ChainEpoch, bf bitfield.BitField) error {
 			quantized := quant.QuantizeUp(epoch)
 			acc.Require(quantized == epoch, "precommit expiration %d is not quantized", epoch)
 			if err = bf.ForEach(func(secNum uint64) error {
-				expireEpochs[secNum] = epoch
+				cleanUpEpochs[secNum] = epoch
 				return nil
 			}); err != nil {
 				acc.Addf("error iteration pre-commit expiration bitfield: %v", err)
 			}
 			return nil
 		})
-		acc.RequireNoError(err, "error iterating pre-commit expiry queue")
+		acc.RequireNoError(err, "error iterating pre-commit clean up queue")
 	}
 
 	precommitTotal := big.Zero()
@@ -790,8 +790,8 @@ func CheckPreCommits(st *State, store adt.Store, allocatedSectors map[uint64]boo
 
 			acc.Require(allocatedSectors[secNum], "pre-committed sector number has not been allocated %d", secNum)
 
-			_, found := expireEpochs[secNum]
-			acc.Require(found, "no expiry epoch for pre-commit at %d", precommit.PreCommitEpoch)
+			_, found := cleanUpEpochs[secNum]
+			acc.Require(found, "no clean up epoch for pre-commit at %d", precommit.PreCommitEpoch)
 
 			precommitTotal = big.Add(precommitTotal, precommit.PreCommitDeposit)
 			return nil
