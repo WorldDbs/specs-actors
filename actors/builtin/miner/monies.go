@@ -5,19 +5,19 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/exitcode"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/math"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/math"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/smoothing"
 )
 
 // Projection period of expected sector block reward for deposit required to pre-commit a sector.
 // This deposit is lost if the pre-commitment is not timely followed up by a commitment proof.
-var PreCommitDepositFactor = 2 // PARAM_SPEC
+var PreCommitDepositFactor = 20 // PARAM_SPEC
 var PreCommitDepositProjectionPeriod = abi.ChainEpoch(PreCommitDepositFactor) * builtin.EpochsInDay
 
 // Projection period of expected sector block rewards for storage pledge required to commit a sector.
 // This pledge is lost if a sector is terminated before its full committed lifetime.
-var InitialPledgeFactor = 2 // PARAM_SPEC
+var InitialPledgeFactor = 20 // PARAM_SPEC
 var InitialPledgeProjectionPeriod = abi.ChainEpoch(InitialPledgeFactor) * builtin.EpochsInDay
 
 // Cap on initial pledge requirement for sectors.
@@ -59,7 +59,7 @@ const TerminationLifetimeCap = 140 // PARAM_SPEC
 const ConsensusFaultFactor = 5
 
 // Fraction of total reward (block reward + gas reward) to be locked up as of V6
-var LockedRewardFactorNum = big.NewInt(50)
+var LockedRewardFactorNum = big.NewInt(75)
 var LockedRewardFactorDenom = big.NewInt(100)
 
 // Base reward for successfully disputing a window posts proofs.
