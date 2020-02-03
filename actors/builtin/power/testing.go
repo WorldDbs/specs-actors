@@ -5,9 +5,9 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
 )
 
 type MinerCronEvent struct {
