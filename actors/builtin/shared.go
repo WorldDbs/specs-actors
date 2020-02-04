@@ -12,7 +12,7 @@ import (
 	builtin0 "github.com/filecoin-project/specs-actors/actors/builtin"
 	builtin2 "github.com/filecoin-project/specs-actors/v2/actors/builtin"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
 )
 
 ///// Code shared by multiple built-in actors. /////
