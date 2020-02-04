@@ -1,4 +1,4 @@
-package test_test
+package test
 
 import (
 	"context"
@@ -8,12 +8,12 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v4/support/ipld"
-	tutil "github.com/filecoin-project/specs-actors/v4/support/testing"
-	vm "github.com/filecoin-project/specs-actors/v4/support/vm"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v5/support/ipld"
+	tutil "github.com/filecoin-project/specs-actors/v5/support/testing"
+	"github.com/filecoin-project/specs-actors/v5/support/vm"
 )
 
 func TestCreateMiner(t *testing.T) {
