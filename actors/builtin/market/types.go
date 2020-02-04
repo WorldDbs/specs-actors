@@ -2,7 +2,7 @@ package market
 
 import (
 	"github.com/filecoin-project/go-state-types/abi"
-	. "github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	. "github.com/filecoin-project/specs-actors/v5/actors/util/adt"
 
 	"github.com/ipfs/go-cid"
 )
