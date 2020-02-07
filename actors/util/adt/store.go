@@ -9,7 +9,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 
-	vmr "github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	vmr "github.com/filecoin-project/specs-actors/v5/actors/runtime"
 )
 
 type Store = adt2.Store
