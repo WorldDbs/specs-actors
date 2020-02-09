@@ -9,17 +9,11 @@ import (
 	"github.com/ipfs/go-cid"
 	xerrors "golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
 )
 
 const epochUndefined = abi.ChainEpoch(-1)
-
-// Market mutations
-// add / rm balance
-// pub deal (always provider)
-// activate deal (miner)
-// end deal (miner terminate, expire(no activation))
 
 // BalanceLockingReason is the reason behind locking an amount.
 type BalanceLockingReason int
@@ -35,8 +29,12 @@ const ProposalsAmtBitwidth = 5
 const StatesAmtBitwidth = 6
 
 type State struct {
+	// Proposals are deals that have been proposed and not yet cleaned up after expiry or termination.
 	Proposals cid.Cid // AMT[DealID]DealProposal
-	States    cid.Cid // AMT[DealID]DealState
+	// States contains state for deals that have been activated and not yet cleaned up after expiry or termination.
+	// After expiration, the state exists until the proposal is cleaned up too.
+	// Invariant: keys(States) ⊆ keys(Proposals).
+	States cid.Cid // AMT[DealID]DealState
 
 	// PendingProposals tracks dealProposals that have not yet reached their deal start date.
 	// We track them here to ensure that miners can't publish the same deal proposal twice
