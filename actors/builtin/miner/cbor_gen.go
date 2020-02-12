@@ -8,6 +8,7 @@ import (
 
 	address "github.com/filecoin-project/go-address"
 	abi "github.com/filecoin-project/go-state-types/abi"
+	miner "github.com/filecoin-project/specs-actors/actors/builtin/miner"
 	proof "github.com/filecoin-project/specs-actors/actors/runtime/proof"
 	cid "github.com/ipfs/go-cid"
 	cbg "github.com/whyrusleeping/cbor-gen"
@@ -67,10 +68,10 @@ func (t *State) MarshalCBOR(w io.Writer) error {
 		return xerrors.Errorf("failed to write cid field t.PreCommittedSectors: %w", err)
 	}
 
-	// t.PreCommittedSectorsExpiry (cid.Cid) (struct)
+	// t.PreCommittedSectorsCleanUp (cid.Cid) (struct)
 
-	if err := cbg.WriteCidBuf(scratch, w, t.PreCommittedSectorsExpiry); err != nil {
-		return xerrors.Errorf("failed to write cid field t.PreCommittedSectorsExpiry: %w", err)
+	if err := cbg.WriteCidBuf(scratch, w, t.PreCommittedSectorsCleanUp); err != nil {
+		return xerrors.Errorf("failed to write cid field t.PreCommittedSectorsCleanUp: %w", err)
 	}
 
 	// t.AllocatedSectors (cid.Cid) (struct)
@@ -210,16 +211,16 @@ func (t *State) UnmarshalCBOR(r io.Reader) error {
 		t.PreCommittedSectors = c
 
 	}
-	// t.PreCommittedSectorsExpiry (cid.Cid) (struct)
+	// t.PreCommittedSectorsCleanUp (cid.Cid) (struct)
 
 	{
 
 		c, err := cbg.ReadCid(br)
 		if err != nil {
-			return xerrors.Errorf("failed to read cid field t.PreCommittedSectorsExpiry: %w", err)
+			return xerrors.Errorf("failed to read cid field t.PreCommittedSectorsCleanUp: %w", err)
 		}
 
-		t.PreCommittedSectorsExpiry = c
+		t.PreCommittedSectorsCleanUp = c
 
 	}
 	// t.AllocatedSectors (cid.Cid) (struct)
@@ -2477,6 +2478,169 @@ func (t *WindowedPoSt) UnmarshalCBOR(r io.Reader) error {
 		}
 
 		t.Proofs[i] = v
+	}
+
+	return nil
+}
+
+var lengthBufProveCommitAggregateParams = []byte{130}
+
+func (t *ProveCommitAggregateParams) MarshalCBOR(w io.Writer) error {
+	if t == nil {
+		_, err := w.Write(cbg.CborNull)
+		return err
+	}
+	if _, err := w.Write(lengthBufProveCommitAggregateParams); err != nil {
+		return err
+	}
+
+	scratch := make([]byte, 9)
+
+	// t.SectorNumbers (bitfield.BitField) (struct)
+	if err := t.SectorNumbers.MarshalCBOR(w); err != nil {
+		return err
+	}
+
+	// t.AggregateProof ([]uint8) (slice)
+	if len(t.AggregateProof) > cbg.ByteArrayMaxLen {
+		return xerrors.Errorf("Byte array in field t.AggregateProof was too long")
+	}
+
+	if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajByteString, uint64(len(t.AggregateProof))); err != nil {
+		return err
+	}
+
+	if _, err := w.Write(t.AggregateProof[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *ProveCommitAggregateParams) UnmarshalCBOR(r io.Reader) error {
+	*t = ProveCommitAggregateParams{}
+
+	br := cbg.GetPeeker(r)
+	scratch := make([]byte, 8)
+
+	maj, extra, err := cbg.CborReadHeaderBuf(br, scratch)
+	if err != nil {
+		return err
+	}
+	if maj != cbg.MajArray {
+		return fmt.Errorf("cbor input should be of type array")
+	}
+
+	if extra != 2 {
+		return fmt.Errorf("cbor input had wrong number of fields")
+	}
+
+	// t.SectorNumbers (bitfield.BitField) (struct)
+
+	{
+
+		if err := t.SectorNumbers.UnmarshalCBOR(br); err != nil {
+			return xerrors.Errorf("unmarshaling t.SectorNumbers: %w", err)
+		}
+
+	}
+	// t.AggregateProof ([]uint8) (slice)
+
+	maj, extra, err = cbg.CborReadHeaderBuf(br, scratch)
+	if err != nil {
+		return err
+	}
+
+	if extra > cbg.ByteArrayMaxLen {
+		return fmt.Errorf("t.AggregateProof: byte array too large (%d)", extra)
+	}
+	if maj != cbg.MajByteString {
+		return fmt.Errorf("expected byte array")
+	}
+
+	if extra > 0 {
+		t.AggregateProof = make([]uint8, extra)
+	}
+
+	if _, err := io.ReadFull(br, t.AggregateProof[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+var lengthBufPreCommitSectorBatchParams = []byte{129}
+
+func (t *PreCommitSectorBatchParams) MarshalCBOR(w io.Writer) error {
+	if t == nil {
+		_, err := w.Write(cbg.CborNull)
+		return err
+	}
+	if _, err := w.Write(lengthBufPreCommitSectorBatchParams); err != nil {
+		return err
+	}
+
+	scratch := make([]byte, 9)
+
+	// t.Sectors ([]miner.SectorPreCommitInfo) (slice)
+	if len(t.Sectors) > cbg.MaxLength {
+		return xerrors.Errorf("Slice value in field t.Sectors was too long")
+	}
+
+	if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajArray, uint64(len(t.Sectors))); err != nil {
+		return err
+	}
+	for _, v := range t.Sectors {
+		if err := v.MarshalCBOR(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *PreCommitSectorBatchParams) UnmarshalCBOR(r io.Reader) error {
+	*t = PreCommitSectorBatchParams{}
+
+	br := cbg.GetPeeker(r)
+	scratch := make([]byte, 8)
+
+	maj, extra, err := cbg.CborReadHeaderBuf(br, scratch)
+	if err != nil {
+		return err
+	}
+	if maj != cbg.MajArray {
+		return fmt.Errorf("cbor input should be of type array")
+	}
+
+	if extra != 1 {
+		return fmt.Errorf("cbor input had wrong number of fields")
+	}
+
+	// t.Sectors ([]miner.SectorPreCommitInfo) (slice)
+
+	maj, extra, err = cbg.CborReadHeaderBuf(br, scratch)
+	if err != nil {
+		return err
+	}
+
+	if extra > cbg.MaxLength {
+		return fmt.Errorf("t.Sectors: array too large (%d)", extra)
+	}
+
+	if maj != cbg.MajArray {
+		return fmt.Errorf("expected cbor array")
+	}
+
+	if extra > 0 {
+		t.Sectors = make([]miner.SectorPreCommitInfo, extra)
+	}
+
+	for i := 0; i < int(extra); i++ {
+
+		var v miner.SectorPreCommitInfo
+		if err := v.UnmarshalCBOR(br); err != nil {
+			return err
+		}
+
+		t.Sectors[i] = v
 	}
 
 	return nil
