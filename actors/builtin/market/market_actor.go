@@ -17,12 +17,12 @@ import (
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 type Actor struct{}
@@ -399,45 +399,37 @@ func (a Actor) ActivateDeals(rt Runtime, params *ActivateDealsParams) *abi.Empty
 	return nil
 }
 
-type SectorDataSpec struct {
-	DealIDs    []abi.DealID
-	SectorType abi.RegisteredSealProof
-}
+//type ComputeDataCommitmentParams struct {
+//	DealIDs    []abi.DealID
+//	SectorType abi.RegisteredSealProof
+//}
+type ComputeDataCommitmentParams = market0.ComputeDataCommitmentParams
 
-type ComputeDataCommitmentParams struct {
-	Inputs []*SectorDataSpec
-}
-
-type ComputeDataCommitmentReturn struct {
-	CommDs []cbg.CborCid
-}
-
-func (a Actor) ComputeDataCommitment(rt Runtime, params *ComputeDataCommitmentParams) *ComputeDataCommitmentReturn {
+func (a Actor) ComputeDataCommitment(rt Runtime, params *ComputeDataCommitmentParams) *cbg.CborCid {
 	rt.ValidateImmediateCallerType(builtin.StorageMinerActorCodeID)
 
 	var st State
 	rt.StateReadonly(&st)
 	proposals, err := AsDealProposalArray(adt.AsStore(rt), st.Proposals)
 	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load deal dealProposals")
-	commDs := make([]cbg.CborCid, len(params.Inputs))
-	for i, commInput := range params.Inputs {
-		pieces := make([]abi.PieceInfo, 0)
-		for _, dealID := range commInput.DealIDs {
-			deal, err := getDealProposal(proposals, dealID)
-			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get dealId %d", dealID)
 
-			pieces = append(pieces, abi.PieceInfo{
-				PieceCID: deal.PieceCID,
-				Size:     deal.PieceSize,
-			})
-		}
-		commD, err := rt.ComputeUnsealedSectorCID(commInput.SectorType, pieces)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalArgument, "failed to compute unsealed sectorCID: %s", err)
-		commDs[i] = (cbg.CborCid)(commD)
+	pieces := make([]abi.PieceInfo, 0)
+	for _, dealID := range params.DealIDs {
+		deal, err := getDealProposal(proposals, dealID)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get dealId %d", dealID)
+
+		pieces = append(pieces, abi.PieceInfo{
+			PieceCID: deal.PieceCID,
+			Size:     deal.PieceSize,
+		})
 	}
-	return &ComputeDataCommitmentReturn{
-		CommDs: commDs,
+
+	commd, err := rt.ComputeUnsealedSectorCID(params.SectorType, pieces)
+	if err != nil {
+		rt.Abortf(exitcode.ErrIllegalArgument, "failed to compute unsealed sector CID: %s", err)
 	}
+
+	return (*cbg.CborCid)(&commd)
 }
 
 //type OnMinerSectorsTerminateParams struct {
@@ -462,8 +454,8 @@ func (a Actor) OnMinerSectorsTerminate(rt Runtime, params *OnMinerSectorsTermina
 		for _, dealID := range params.DealIDs {
 			deal, found, err := msm.dealProposals.Get(dealID)
 			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get deal proposal %v", dealID)
-			// The deal may have expired and been deleted before the sector is terminated.
-			// Nothing to do, but continue execution for the other deals.
+			// deal could have terminated and hence deleted before the sector is terminated.
+			// we should simply continue instead of aborting execution here if a deal is not found.
 			if !found {
 				continue
 			}
@@ -478,8 +470,6 @@ func (a Actor) OnMinerSectorsTerminate(rt Runtime, params *OnMinerSectorsTermina
 			state, found, err := msm.dealStates.Get(dealID)
 			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get deal state %v", dealID)
 			if !found {
-				// A deal with a proposal but no state is not activated, but then it should not be
-				// part of a sector that is terminating.
 				rt.Abortf(exitcode.ErrIllegalArgument, "no state for deal %v", dealID)
 			}
 
@@ -542,12 +532,13 @@ func (a Actor) CronTick(rt Runtime, _ *abi.EmptyValue) *abi.EmptyValue {
 						timedOutVerifiedDeals = append(timedOutVerifiedDeals, deal)
 					}
 
-					// Delete the proposal (but not state, which doesn't exist).
-					err = msm.dealProposals.Delete(dealID)
-					builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete deal proposal %d", dealID)
+					// we should not attempt to delete the DealState because it does NOT exist
+					if err := deleteDealProposalAndState(dealID, msm.dealStates, msm.dealProposals, true, false); err != nil {
+						builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete deal %d", dealID)
+					}
 
-					err = msm.pendingDeals.Delete(abi.CidKey(dcid))
-					builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete pending proposal %d (%v)", dealID, dcid)
+					pdErr := msm.pendingDeals.Delete(abi.CidKey(dcid))
+					builtin.RequireNoErr(rt, pdErr, exitcode.ErrIllegalState, "failed to delete pending proposal %v", dcid)
 					return nil
 				}
 
@@ -562,13 +553,10 @@ func (a Actor) CronTick(rt Runtime, _ *abi.EmptyValue) *abi.EmptyValue {
 
 				if removeDeal {
 					builtin.RequireState(rt, nextEpoch == epochUndefined, "removed deal %d should have no scheduled epoch (got %d)", dealID, nextEpoch)
-					amountSlashed = big.Add(amountSlashed, slashAmount)
 
-					// Delete proposal and state simultaneously.
-					err = msm.dealStates.Delete(dealID)
-					builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete deal state %d", dealID)
-					err = msm.dealProposals.Delete(dealID)
-					builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete deal proposal %d", dealID)
+					amountSlashed = big.Add(amountSlashed, slashAmount)
+					err := deleteDealProposalAndState(dealID, msm.dealStates, msm.dealProposals, true, true)
+					builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete deal proposal and states")
 				} else {
 					builtin.RequireState(rt, nextEpoch > rt.CurrEpoch(), "continuing deal %d next epoch %d should be in future", dealID, nextEpoch)
 					builtin.RequireState(rt, slashAmount.IsZero(), "continuing deal %d should not be slashed", dealID)
@@ -648,6 +636,23 @@ func genRandNextEpoch(currEpoch abi.ChainEpoch, deal *DealProposal, rbF func(cry
 	offset := binary.BigEndian.Uint64(rb)
 
 	return deal.StartEpoch + abi.ChainEpoch(offset%uint64(DealUpdatesInterval)), nil
+}
+
+func deleteDealProposalAndState(dealId abi.DealID, states *DealMetaArray, proposals *DealArray, removeProposal bool,
+	removeState bool) error {
+	if removeProposal {
+		if err := proposals.Delete(dealId); err != nil {
+			return xerrors.Errorf("failed to delete proposal %d : %w", dealId, err)
+		}
+	}
+
+	if removeState {
+		if err := states.Delete(dealId); err != nil {
+			return xerrors.Errorf("failed to delete deal state: %w", err)
+		}
+	}
+
+	return nil
 }
 
 //
