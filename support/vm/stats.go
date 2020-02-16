@@ -1,4 +1,4 @@
-package vm
+package vm_test
 
 import (
 	vm2 "github.com/filecoin-project/specs-actors/v2/support/vm"
