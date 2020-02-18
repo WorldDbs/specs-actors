@@ -1,4 +1,4 @@
-package vm
+package vm_test
 
 import (
 	"bytes"
@@ -17,22 +17,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/account"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/cron"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/exported"
-	initactor "github.com/filecoin-project/specs-actors/v5/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/system"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v5/actors/states"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/smoothing"
-	actor_testing "github.com/filecoin-project/specs-actors/v5/support/testing"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/cron"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/exported"
+	initactor "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/system"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v4/actors/states"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
+	actor_testing "github.com/filecoin-project/specs-actors/v4/support/testing"
 )
 
 var FIL = big.NewInt(1e18)
@@ -304,8 +304,8 @@ func AdvanceByDeadline(t *testing.T, v *VM, minerIDAddr address.Address, predica
 		v, err = v.WithEpoch(dlInfo.Last())
 		require.NoError(t, err)
 
-		result := v.ApplyMessage(builtin.SystemActorAddr, builtin.CronActorAddr, big.Zero(), builtin.MethodsCron.EpochTick, nil)
-		require.Equal(t, exitcode.Ok, result.Code)
+		_, code := v.ApplyMessage(builtin.SystemActorAddr, builtin.CronActorAddr, big.Zero(), builtin.MethodsCron.EpochTick, nil)
+		require.Equal(t, exitcode.Ok, code)
 
 		dlInfo = NextMinerDLInfo(t, v, minerIDAddr)
 	}
@@ -480,9 +480,9 @@ func GetDealState(t *testing.T, vm *VM, dealID abi.DealID) (*market.DealState, b
 //
 
 func ApplyOk(t *testing.T, v *VM, from, to address.Address, value abi.TokenAmount, method abi.MethodNum, params interface{}) cbor.Marshaler {
-	result := v.ApplyMessage(from, to, value, method, params)
-	require.Equal(t, exitcode.Ok, result.Code)
-	return result.Ret
+	ret, code := v.ApplyMessage(from, to, value, method, params)
+	require.Equal(t, exitcode.Ok, code)
+	return ret
 }
 
 //
