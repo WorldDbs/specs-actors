@@ -1,7 +1,6 @@
-package vm
+package vm_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
@@ -16,11 +15,11 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/pkg/errors"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	init_ "github.com/filecoin-project/specs-actors/v5/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v5/actors/states"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	init_ "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v4/actors/states"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 // VM is a simplified message execution framework for the purposes of testing inter-actor communication.
@@ -39,7 +38,8 @@ type VM struct {
 	actors      *adt.Map // The current (not necessarily committed) root node.
 	actorsDirty bool
 
-	emptyObject cid.Cid
+	emptyObject  cid.Cid
+	callSequence uint64
 
 	logs            []string
 	invocationStack []*Invocation
@@ -49,8 +49,6 @@ type VM struct {
 	statsByMethod StatsByCall
 
 	circSupply abi.TokenAmount
-
-	gasPrices Pricelist
 }
 
 // VM types
@@ -64,50 +62,6 @@ type InternalMessage struct {
 	value  abi.TokenAmount
 	method abi.MethodNum
 	params interface{}
-}
-
-type ChainMessage struct {
-	Version uint64
-
-	From address.Address
-	To   address.Address
-
-	Nonce uint64
-
-	Value abi.TokenAmount
-
-	GasLimit   int64
-	GasFeeCap  abi.TokenAmount
-	GasPremium abi.TokenAmount
-
-	Method abi.MethodNum
-	Params []byte
-}
-
-func makeChainMessage(from, to address.Address, nonce uint64, value abi.TokenAmount, method abi.MethodNum, params interface{}) (*ChainMessage, error) {
-	var buf bytes.Buffer
-	if params == nil {
-		if err := abi.Empty.MarshalCBOR(&buf); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := params.(cbor.Er).MarshalCBOR(&buf); err != nil {
-			return nil, err
-		}
-	}
-
-	return &ChainMessage{
-		Version:    0,
-		From:       from,
-		To:         to,
-		Nonce:      nonce,
-		Value:      value,
-		GasLimit:   defaultGasLimit,
-		GasFeeCap:  big.Zero(),
-		GasPremium: big.Zero(),
-		Method:     method,
-		Params:     buf.Bytes(),
-	}, nil
 }
 
 type Invocation struct {
@@ -144,7 +98,6 @@ func NewVM(ctx context.Context, actorImpls ActorImplLookup, store adt.Store) *VM
 		networkVersion: network.VersionMax,
 		statsByMethod:  make(StatsByCall),
 		circSupply:     big.Mul(big.NewInt(1e9), big.NewInt(1e18)),
-		gasPrices:      &v13PriceList,
 	}
 }
 
@@ -172,7 +125,6 @@ func NewVMAtEpoch(ctx context.Context, actorImpls ActorImplLookup, store adt.Sto
 		networkVersion: network.VersionMax,
 		statsByMethod:  make(StatsByCall),
 		circSupply:     big.Mul(big.NewInt(1e9), big.NewInt(1e18)),
-		gasPrices:      &v13PriceList,
 	}, nil
 }
 
@@ -200,7 +152,6 @@ func (vm *VM) WithEpoch(epoch abi.ChainEpoch) (*VM, error) {
 		statsSource:    vm.statsSource,
 		statsByMethod:  make(StatsByCall),
 		circSupply:     vm.circSupply,
-		gasPrices:      &v13PriceList,
 	}, nil
 }
 
@@ -228,7 +179,6 @@ func (vm *VM) WithNetworkVersion(nv network.Version) (*VM, error) {
 		statsSource:    vm.statsSource,
 		statsByMethod:  make(StatsByCall),
 		circSupply:     vm.circSupply,
-		gasPrices:      &v13PriceList,
 	}, nil
 }
 
@@ -334,23 +284,16 @@ func (vm *VM) NormalizeAddress(addr address.Address) (address.Address, bool) {
 	return idAddr, found
 }
 
-type MessageResult struct {
-	Ret        cbor.Marshaler
-	Code       exitcode.ExitCode
-	GasCharged int64
-}
-
 // ApplyMessage applies the message to the current state.
-func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, method abi.MethodNum, params interface{}) MessageResult {
+func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, method abi.MethodNum, params interface{}) (cbor.Marshaler, exitcode.ExitCode) {
 	// This method does not actually execute the message itself,
 	// but rather deals with the pre/post processing of a message.
 	// (see: `invocationContext.invoke()` for the dispatch and execution)
-	gasCharged := int64(0)
 
 	// load actor from global state
 	fromID, ok := vm.NormalizeAddress(from)
 	if !ok {
-		return MessageResult{nil, exitcode.SysErrSenderInvalid, gasCharged}
+		return nil, exitcode.SysErrSenderInvalid
 	}
 
 	fromActor, found, err := vm.GetActor(fromID)
@@ -359,7 +302,7 @@ func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, meth
 	}
 	if !found {
 		// Execution error; sender does not exist at time of message execution.
-		return MessageResult{nil, exitcode.SysErrSenderInvalid, gasCharged}
+		return nil, exitcode.SysErrSenderInvalid
 	}
 
 	// checkpoint state
@@ -372,40 +315,19 @@ func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, meth
 	}
 
 	// send
-	// 1. update state tree nonce
-	// 2. build chain message and charge gas
-	// 3. build internal message
-	// 4. build invocation context
-	// 5. process the msg
-	callSeq := fromActor.CallSeqNum
-	fromActor.CallSeqNum = callSeq + 1
-	if err := vm.setActor(context.Background(), fromID, fromActor); err != nil {
-		panic(err)
-	}
-
-	msg, err := makeChainMessage(from, to, callSeq, value, method, params)
-	if err != nil {
-		panic(err)
-	}
-	var msgBuf bytes.Buffer
-	if err := msg.MarshalCBOR(&msgBuf); err != nil {
-		panic(err)
-	}
-	bs := msgBuf.Bytes()
-	charge := vm.gasPrices.OnChainMessage(len(bs))
-	msgGasCharge := charge.Total()
+	// 1. build internal message
+	// 2. build invocation context
+	// 3. process the msg
 
 	topLevel := topLevelContext{
 		originatorStableAddress: from,
 		// this should be nonce, but we only care that it creates a unique stable address
-		originatorCallSeq:    callSeq,
+		originatorCallSeq:    vm.callSequence,
 		newActorAddressCount: 0,
 		statsSource:          vm.statsSource,
 		circSupply:           vm.circSupply,
-		gasUsed:              msgGasCharge,
-		gasPrices:            vm.gasPrices,
-		gasAvailable:         defaultGasLimit,
 	}
+	vm.callSequence++
 
 	// build internal msg
 	imsg := InternalMessage{
@@ -438,17 +360,10 @@ func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, meth
 		if _, err := vm.checkpoint(); err != nil {
 			panic(err)
 		}
+
 	}
 
-	// serialize return and charge gas
-	var retBuf bytes.Buffer
-	if err := ret.inner.MarshalCBOR(&retBuf); err != nil {
-		panic(err)
-	}
-	retGasCharge := vm.gasPrices.OnChainReturnValue(len(retBuf.Bytes()))
-	gasCharged = retGasCharge.Total() + ctx.topLevel.gasUsed
-
-	return MessageResult{ret.inner, exitCode, gasCharged}
+	return ret.inner, exitCode
 }
 
 func (vm *VM) StateRoot() cid.Cid {
@@ -522,7 +437,7 @@ func (vm *VM) GetActorImpls() map[cid.Cid]rt.VMActor {
 // transfer debits money from one account and credits it to another.
 // avoid calling this method with a zero amount else it will perform unnecessary actor loading.
 //
-// WARNING: this method will panic if the the amount is negative, accounts dont exist, or have insufficient funds.
+// WARNING: this method will panic if the the amount is negative, accounts dont exist, or have inssuficient funds.
 //
 // Note: this is not idiomatic, it follows the Spec expectations for this method.
 func (vm *VM) transfer(debitFrom address.Address, creditTo address.Address, amount abi.TokenAmount) (*states.Actor, *states.Actor) {
