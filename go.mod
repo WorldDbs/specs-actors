@@ -1,17 +1,18 @@
-module github.com/filecoin-project/specs-actors/v5
+module github.com/filecoin-project/specs-actors/v4
 
-go 1.16
+go 1.13
 
 require (
 	github.com/filecoin-project/go-address v0.0.5
+	github.com/filecoin-project/go-amt-ipld/v2 v2.1.0
 	github.com/filecoin-project/go-amt-ipld/v3 v3.0.0
 	github.com/filecoin-project/go-bitfield v0.2.3
+	github.com/filecoin-project/go-hamt-ipld/v2 v2.0.0
 	github.com/filecoin-project/go-hamt-ipld/v3 v3.0.1
-	github.com/filecoin-project/go-state-types v0.1.1-0.20210506134452-99b279731c48
+	github.com/filecoin-project/go-state-types v0.1.0
 	github.com/filecoin-project/specs-actors v0.9.13
 	github.com/filecoin-project/specs-actors/v2 v2.3.5-0.20210114162132-5b58b773f4fb
 	github.com/filecoin-project/specs-actors/v3 v3.1.0
-	github.com/filecoin-project/specs-actors/v4 v4.0.0
 	github.com/ipfs/go-block-format v0.0.3
 	github.com/ipfs/go-cid v0.0.7
 	github.com/ipfs/go-ipld-cbor v0.0.5
