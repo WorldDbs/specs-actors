@@ -7,8 +7,8 @@ import (
 	"github.com/ipfs/go-cid"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 // Value type of the top level of the state tree.
