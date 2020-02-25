@@ -5,10 +5,11 @@ import (
 
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/network"
 	"github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
 )
 
 // The period over which a miner's active sectors are expected to be proven via WindowPoSt.
@@ -81,7 +82,7 @@ const DeclarationsMax = AddressedPartitionsMax
 
 // The maximum number of sector infos that can be loaded in a single invocation.
 // This limits the amount of state to be read in a single message execution.
-const AddressedSectorsMax = 25_000 // PARAM_SPEC
+const AddressedSectorsMax = 10_000 // PARAM_SPEC
 
 // Libp2p peer info limits.
 const (
@@ -114,21 +115,19 @@ var SealedCIDPrefix = cid.Prefix{
 	MhLength: 32,
 }
 
-// List of proof types which may be used when creating a new miner actor.
+// List of proof types which may be used when creating a new miner actor or pre-committing a new sector.
 // This is mutable to allow configuration of testing and development networks.
-var WindowPoStProofTypes = map[abi.RegisteredPoStProof]struct{}{
-	abi.RegisteredPoStProof_StackedDrgWindow32GiBV1: {},
-	abi.RegisteredPoStProof_StackedDrgWindow64GiBV1: {},
+var PreCommitSealProofTypesV0 = map[abi.RegisteredSealProof]struct{}{
+	abi.RegisteredSealProof_StackedDrg32GiBV1: {},
+	abi.RegisteredSealProof_StackedDrg64GiBV1: {},
+}
+var PreCommitSealProofTypesV7 = map[abi.RegisteredSealProof]struct{}{
+	abi.RegisteredSealProof_StackedDrg32GiBV1:   {},
+	abi.RegisteredSealProof_StackedDrg64GiBV1:   {},
+	abi.RegisteredSealProof_StackedDrg32GiBV1_1: {},
+	abi.RegisteredSealProof_StackedDrg64GiBV1_1: {},
 }
 
-// Checks whether a PoSt proof type is supported for new miners.
-func CanWindowPoStProof(s abi.RegisteredPoStProof) bool {
-	_, ok := WindowPoStProofTypes[s]
-	return ok
-}
-
-// List of proof types which may be used when pre-committing a new sector.
-// This is mutable to allow configuration of testing and development networks.
 // From network version 8, sectors sealed with the V1 seal proof types cannot be committed.
 var PreCommitSealProofTypesV8 = map[abi.RegisteredSealProof]struct{}{
 	abi.RegisteredSealProof_StackedDrg32GiBV1_1: {},
@@ -136,14 +135,30 @@ var PreCommitSealProofTypesV8 = map[abi.RegisteredSealProof]struct{}{
 }
 
 // Checks whether a seal proof type is supported for new miners and sectors.
-func CanPreCommitSealProof(s abi.RegisteredSealProof) bool {
-	_, ok := PreCommitSealProofTypesV8[s]
+func CanPreCommitSealProof(s abi.RegisteredSealProof, nv network.Version) bool {
+	_, ok := PreCommitSealProofTypesV0[s]
+	if nv >= network.Version7 {
+		_, ok = PreCommitSealProofTypesV7[s]
+	}
+	if nv >= network.Version8 {
+		_, ok = PreCommitSealProofTypesV8[s]
+	}
 	return ok
 }
 
+// List of proof types for which sector lifetime may be extended.
+// From network version 7 to version 10, sectors sealed with the V1 seal proof types cannot be extended.
+var ExtensibleProofTypes = map[abi.RegisteredSealProof]struct{}{
+	abi.RegisteredSealProof_StackedDrg32GiBV1_1: {},
+	abi.RegisteredSealProof_StackedDrg64GiBV1_1: {},
+}
+
 // Checks whether a seal proof type is supported for new miners and sectors.
-// As of network version 11, all permitted seal proof types may be extended.
-func CanExtendSealProofType(_ abi.RegisteredSealProof) bool {
+func CanExtendSealProofType(s abi.RegisteredSealProof, nv network.Version) bool {
+	if nv >= network.Version7 && nv <= network.Version10 {
+		_, ok := ExtensibleProofTypes[s]
+		return ok
+	}
 	return true
 }
 
@@ -156,16 +171,12 @@ var MaxProveCommitDuration = map[abi.RegisteredSealProof]abi.ChainEpoch{
 	abi.RegisteredSealProof_StackedDrg512MiBV1: builtin.EpochsInDay + PreCommitChallengeDelay,
 	abi.RegisteredSealProof_StackedDrg64GiBV1:  builtin.EpochsInDay + PreCommitChallengeDelay,
 
-	abi.RegisteredSealProof_StackedDrg32GiBV1_1:  6*builtin.EpochsInDay + PreCommitChallengeDelay, // PARAM_SPEC
-	abi.RegisteredSealProof_StackedDrg2KiBV1_1:   6*builtin.EpochsInDay + PreCommitChallengeDelay,
-	abi.RegisteredSealProof_StackedDrg8MiBV1_1:   6*builtin.EpochsInDay + PreCommitChallengeDelay,
-	abi.RegisteredSealProof_StackedDrg512MiBV1_1: 6*builtin.EpochsInDay + PreCommitChallengeDelay,
-	abi.RegisteredSealProof_StackedDrg64GiBV1_1:  6*builtin.EpochsInDay + PreCommitChallengeDelay,
+	abi.RegisteredSealProof_StackedDrg32GiBV1_1:  builtin.EpochsInDay + PreCommitChallengeDelay, // PARAM_SPEC
+	abi.RegisteredSealProof_StackedDrg2KiBV1_1:   builtin.EpochsInDay + PreCommitChallengeDelay,
+	abi.RegisteredSealProof_StackedDrg8MiBV1_1:   builtin.EpochsInDay + PreCommitChallengeDelay,
+	abi.RegisteredSealProof_StackedDrg512MiBV1_1: builtin.EpochsInDay + PreCommitChallengeDelay,
+	abi.RegisteredSealProof_StackedDrg64GiBV1_1:  builtin.EpochsInDay + PreCommitChallengeDelay,
 }
-
-// The maximum number of sector pre-commitments in a single batch.
-// 32 sectors per epoch would support a single miner onboarding 1EiB of 32GiB sectors in 1 year.
-const PreCommitSectorBatchMaxSize = 32
 
 // Maximum delay between challenge and pre-commitment.
 // This prevents a miner sealing sectors far in advance of committing them to the chain, thus committing to a
@@ -198,12 +209,12 @@ var FaultMaxAge = WPoStProvingPeriod * 14 // PARAM_SPEC
 const WorkerKeyChangeDelay = ChainFinality // PARAM_SPEC
 
 // Minimum number of epochs past the current epoch a sector may be set to expire.
-const MinSectorExpiration = 180 * builtin.EpochsInDay // PARAM_SPEC
+const MinSectorExpiration = 90 * builtin.EpochsInDay // PARAM_SPEC
 
 // The maximum number of epochs past the current epoch that sector lifetime may be extended.
 // A sector may be extended multiple times, however, the total maximum lifetime is also bounded by
 // the associated seal proof's maximum lifetime.
-const MaxSectorExpirationExtension = 540 * builtin.EpochsInDay // PARAM_SPEC
+const MaxSectorExpirationExtension = 270 * builtin.EpochsInDay // PARAM_SPEC
 
 // Ratio of sector size to maximum number of deals per sector.
 // The maximum number of deals is the sector size divided by this number (2^27)
@@ -262,9 +273,25 @@ func SectorDealsMax(size abi.SectorSize) uint64 {
 	return max64(256, uint64(size/DealLimitDenominator))
 }
 
-// Default share of block reward allocated as reward to the consensus fault reporter.
-// Applied as epochReward / (expectedLeadersPerEpoch * consensusFaultReporterDefaultShare)
-const consensusFaultReporterDefaultShare int64 = 4
+// Initial share of consensus fault penalty allocated as reward to the reporter.
+var consensusFaultReporterInitialShare = builtin.BigFrac{
+	Numerator:   big.NewInt(1), // PARAM_SPEC
+	Denominator: big.NewInt(1000),
+}
+
+// Per-epoch growth rate of the consensus fault reporter reward.
+// consensusFaultReporterInitialShare*consensusFaultReporterShareGrowthRate^consensusFaultGrowthDuration ~= consensusFaultReporterMaxShare
+// consensusFaultGrowthDuration = 500 epochs
+var consensusFaultReporterShareGrowthRate = builtin.BigFrac{
+	Numerator:   big.NewInt(100785473384), // PARAM_SPEC
+	Denominator: big.NewInt(100000000000),
+}
+
+// Maximum share of consensus fault penalty allocated as reporter reward.
+var consensusFaultMaxReporterShare = builtin.BigFrac{
+	Numerator:   big.NewInt(1), // PARAM_SPEC
+	Denominator: big.NewInt(20),
+}
 
 // Specification for a linear vesting schedule.
 type VestSpec struct {
@@ -283,11 +310,37 @@ var RewardVestingSpec = VestSpec{ // PARAM_SPEC
 }
 
 // When an actor reports a consensus fault, they earn a share of the penalty paid by the miner.
-func RewardForConsensusSlashReport(epochReward abi.TokenAmount) abi.TokenAmount {
-	return big.Div(epochReward,
-		big.Mul(big.NewInt(builtin.ExpectedLeadersPerEpoch),
-			big.NewInt(consensusFaultReporterDefaultShare)),
-	)
+// This amount is:  Min(initialShare * growthRate^elapsed, maxReporterShare) * collateral
+// The reward grows over time until a maximum, forming an auction for the report.
+func RewardForConsensusSlashReport(elapsedEpoch abi.ChainEpoch, collateral abi.TokenAmount) abi.TokenAmount {
+	// High level description
+	// var growthRate = SLASHER_SHARE_GROWTH_RATE_NUM / SLASHER_SHARE_GROWTH_RATE_DENOM
+	// var multiplier = growthRate^elapsedEpoch
+	// var slasherProportion = min(INITIAL_SLASHER_SHARE * multiplier, 0.05)
+	// return collateral * slasherProportion
+
+	// BigInt Operation
+	// NUM = SLASHER_SHARE_GROWTH_RATE_NUM^elapsedEpoch * INITIAL_SLASHER_SHARE_NUM * collateral
+	// DENOM = SLASHER_SHARE_GROWTH_RATE_DENOM^elapsedEpoch * INITIAL_SLASHER_SHARE_DENOM
+	// slasher_amount = min(NUM/DENOM, collateral)
+	elapsed := big.NewInt(int64(elapsedEpoch))
+
+	// The following is equivalent to: slasherShare = growthRate^elapsed
+	// slasherShareNumerator = growthRateNumerator^elapsed
+	slasherShareNumerator := big.Exp(consensusFaultReporterShareGrowthRate.Numerator, elapsed)
+	// slasherShareDenominator = growthRateDenominator^elapsed
+	slasherShareDenominator := big.Exp(consensusFaultReporterShareGrowthRate.Denominator, elapsed)
+
+	// The following is equivalent to: reward = slasherShare * initialShare * collateral
+	// num = slasherShareNumerator * initialShareNumerator * collateral
+	num := big.Mul(big.Mul(slasherShareNumerator, consensusFaultReporterInitialShare.Numerator), collateral)
+	// denom = slasherShareDenominator * initialShareDenominator
+	denom := big.Mul(slasherShareDenominator, consensusFaultReporterInitialShare.Denominator)
+
+	// The following is equivalent to: Min(reward, collateral * maxReporterShare)
+	// Min(rewardNum/rewardDenom, maxReporterShareNum/maxReporterShareDen*collateral)
+	return big.Min(big.Div(num, denom), big.Div(big.Mul(collateral, consensusFaultMaxReporterShare.Numerator),
+		consensusFaultMaxReporterShare.Denominator))
 }
 
 // The reward given for successfully disputing a window post.
@@ -295,12 +348,3 @@ func RewardForDisputedWindowPoSt(proofType abi.RegisteredPoStProof, disputedPowe
 	// This is currently just the base. In the future, the fee may scale based on the disputed power.
 	return BaseRewardForDisputedWindowPoSt
 }
-
-const MaxAggregatedSectors = 819
-const MinAggregatedSectors = 1
-const MaxAggregateProofSize = 192000
-
-// The delay between pre commit expiration and clean up from state. This enforces that expired pre-commits
-// stay in state for a period of time creating a grace period during which a late-running aggregated prove-commit
-// can still prove its non-expired precommits without resubmitting a message
-const ExpiredPreCommitCleanUpDelay = 8 * builtin.EpochsInHour
