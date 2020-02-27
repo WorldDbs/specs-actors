@@ -22,15 +22,15 @@ import (
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v5/actors/runtime/proof"
-	. "github.com/filecoin-project/specs-actors/v5/actors/util"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
+	. "github.com/filecoin-project/specs-actors/v4/actors/util"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
 )
 
 type Runtime = runtime.Runtime
@@ -74,8 +74,6 @@ func (a Actor) Exports() []interface{} {
 		22:                        a.RepayDebt,
 		23:                        a.ChangeOwnerAddress,
 		24:                        a.DisputeWindowedPoSt,
-		25:                        a.PreCommitSectorBatch,
-		26:                        a.ProveCommitAggregate,
 	}
 }
 
@@ -102,10 +100,6 @@ func (a Actor) Constructor(rt Runtime, params *ConstructorParams) *abi.EmptyValu
 
 	checkControlAddresses(rt, params.ControlAddrs)
 	checkPeerInfo(rt, params.PeerId, params.Multiaddrs)
-
-	if !CanWindowPoStProof(params.WindowPoStProofType) {
-		rt.Abortf(exitcode.ErrIllegalArgument, "proof type %d not allowed for new miner actors", params.WindowPoStProofType)
-	}
 
 	owner := resolveControlAddress(rt, params.OwnerAddr)
 	worker := resolveWorkerAddress(rt, params.WorkerAddr)
@@ -337,15 +331,6 @@ func (a Actor) SubmitWindowedPoSt(rt Runtime, params *SubmitWindowedPoStParams) 
 	store := adt.AsStore(rt)
 	var st State
 
-	// Verify that the miner has passed exactly 1 proof.
-	if len(params.Proofs) != 1 {
-		rt.Abortf(exitcode.ErrIllegalArgument, "expected exactly one proof, got %d", len(params.Proofs))
-	}
-
-	if !CanWindowPoStProof(params.Proofs[0].PoStProof) {
-		rt.Abortf(exitcode.ErrIllegalArgument, "proof type %d not allowed", params.Proofs[0].PoStProof)
-	}
-
 	if params.Deadline >= WPoStPeriodDeadlines {
 		rt.Abortf(exitcode.ErrIllegalArgument, "invalid deadline %d of %d", params.Deadline, WPoStPeriodDeadlines)
 	}
@@ -365,9 +350,18 @@ func (a Actor) SubmitWindowedPoSt(rt Runtime, params *SubmitWindowedPoStParams) 
 
 		rt.ValidateImmediateCallerIs(append(info.ControlAddresses, info.Owner, info.Worker)...)
 
+		// Verify that the miner has passed 0 or 1 proofs. If they've
+		// passed 1, verify that it's a good proof.
+		//
+		// This can be 0 if the miner isn't actually proving anything,
+		// just skipping all sectors.
+		if len(params.Proofs) != 1 {
+			rt.Abortf(exitcode.ErrIllegalArgument, "expected exactly one proof, got %d", len(params.Proofs))
+		}
+
 		// Make sure the miner is using the correct proof type.
 		if params.Proofs[0].PoStProof != info.WindowPoStProofType {
-			rt.Abortf(exitcode.ErrIllegalArgument, "expected proof of type %d, got proof of type %d", info.WindowPoStProofType, params.Proofs[0])
+			rt.Abortf(exitcode.ErrIllegalArgument, "expected proof of type %s, got proof of type %s", info.WindowPoStProofType, params.Proofs[0])
 		}
 
 		// Make sure the proof size doesn't exceed the max. We could probably check for an exact match, but this is safer.
@@ -653,102 +647,65 @@ func (a Actor) DisputeWindowedPoSt(rt Runtime, params *DisputeWindowedPoStParams
 //}
 type PreCommitSectorParams = miner0.SectorPreCommitInfo
 
-// Pledges to seal and commit a single sector.
-// See PreCommitSectorBatch for details.
-// This method may be deprecated and removed in the future.
+// Proposals must be posted on chain via sma.PublishStorageDeals before PreCommitSector.
+// Optimization: PreCommitSector could contain a list of deals that are not published yet.
 func (a Actor) PreCommitSector(rt Runtime, params *PreCommitSectorParams) *abi.EmptyValue {
-	// This is a direct method call to self, not a message send.
-	batchParams := &PreCommitSectorBatchParams{Sectors: []miner0.SectorPreCommitInfo{*params}}
-	a.PreCommitSectorBatch(rt, batchParams)
-	return nil
-}
-
-type PreCommitSectorBatchParams struct {
-	Sectors []miner0.SectorPreCommitInfo
-}
-
-// Pledges the miner to seal and commit some new sectors.
-// The caller specifies sector numbers, sealed sector data CIDs, seal randomness epoch, expiration, and the IDs
-// of any storage deals contained in the sector data. The storage deal proposals must be already submitted
-// to the storage market actor.
-// A pre-commitment may specify an existing committed-capacity sector that the committed sector will replace
-// when proven.
-// This method calculates the sector's power, locks a pre-commit deposit for the sector, stores information about the
-// sector in state and waits for it to be proven or expire.
-func (a Actor) PreCommitSectorBatch(rt Runtime, params *PreCommitSectorBatchParams) *abi.EmptyValue {
-	currEpoch := rt.CurrEpoch()
-	if len(params.Sectors) == 0 {
-		rt.Abortf(exitcode.ErrIllegalArgument, "batch empty")
-	} else if len(params.Sectors) > PreCommitSectorBatchMaxSize {
-		rt.Abortf(exitcode.ErrIllegalArgument, "batch of %d too large, max %d", len(params.Sectors), PreCommitSectorBatchMaxSize)
+	nv := rt.NetworkVersion()
+	if !CanPreCommitSealProof(params.SealProof, nv) {
+		rt.Abortf(exitcode.ErrIllegalArgument, "unsupported seal proof type %v at network version %v", params.SealProof, nv)
+	}
+	if params.SectorNumber > abi.MaxSectorNumber {
+		rt.Abortf(exitcode.ErrIllegalArgument, "sector number %d out of range 0..(2^63-1)", params.SectorNumber)
+	}
+	if !params.SealedCID.Defined() {
+		rt.Abortf(exitcode.ErrIllegalArgument, "sealed CID undefined")
+	}
+	if params.SealedCID.Prefix() != SealedCIDPrefix {
+		rt.Abortf(exitcode.ErrIllegalArgument, "sealed CID had wrong prefix")
+	}
+	if params.SealRandEpoch >= rt.CurrEpoch() {
+		rt.Abortf(exitcode.ErrIllegalArgument, "seal challenge epoch %v must be before now %v", params.SealRandEpoch, rt.CurrEpoch())
 	}
 
-	// Check per-sector preconditions before opening state transaction or sending other messages.
-	challengeEarliest := currEpoch - MaxPreCommitRandomnessLookback
-	sectorsDeals := make([]market.SectorDeals, len(params.Sectors))
-	sectorNumbers := bitfield.New()
-	for i, precommit := range params.Sectors {
-		// Bitfied.IsSet() is fast when there are only locally-set values.
-		set, err := sectorNumbers.IsSet(uint64(precommit.SectorNumber))
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "error checking sector number")
-		if set {
-			rt.Abortf(exitcode.ErrIllegalArgument, "duplicate sector number %d", precommit.SectorNumber)
-		}
-		sectorNumbers.Set(uint64(precommit.SectorNumber))
+	challengeEarliest := rt.CurrEpoch() - MaxPreCommitRandomnessLookback
+	if params.SealRandEpoch < challengeEarliest {
+		rt.Abortf(exitcode.ErrIllegalArgument, "seal challenge epoch %v too old, must be after %v", params.SealRandEpoch, challengeEarliest)
+	}
 
-		if !CanPreCommitSealProof(precommit.SealProof) {
-			rt.Abortf(exitcode.ErrIllegalArgument, "unsupported seal proof type %v", precommit.SealProof)
-		}
-		if precommit.SectorNumber > abi.MaxSectorNumber {
-			rt.Abortf(exitcode.ErrIllegalArgument, "sector number %d out of range 0..(2^63-1)", precommit.SectorNumber)
-		}
-		if !precommit.SealedCID.Defined() {
-			rt.Abortf(exitcode.ErrIllegalArgument, "sealed CID undefined")
-		}
-		if precommit.SealedCID.Prefix() != SealedCIDPrefix {
-			rt.Abortf(exitcode.ErrIllegalArgument, "sealed CID had wrong prefix")
-		}
-		if precommit.SealRandEpoch >= currEpoch {
-			rt.Abortf(exitcode.ErrIllegalArgument, "seal challenge epoch %v must be before now %v", precommit.SealRandEpoch, rt.CurrEpoch())
-		}
-		if precommit.SealRandEpoch < challengeEarliest {
-			rt.Abortf(exitcode.ErrIllegalArgument, "seal challenge epoch %v too old, must be after %v", precommit.SealRandEpoch, challengeEarliest)
-		}
+	// Require sector lifetime meets minimum by assuming activation happens at last epoch permitted for seal proof.
+	// This could make sector maximum lifetime validation more lenient if the maximum sector limit isn't hit first.
+	maxActivation := rt.CurrEpoch() + MaxProveCommitDuration[params.SealProof]
+	validateExpiration(rt, maxActivation, params.Expiration, params.SealProof)
 
-		// Require sector lifetime meets minimum by assuming activation happens at last epoch permitted for seal proof.
-		// This could make sector maximum lifetime validation more lenient if the maximum sector limit isn't hit first.
-		maxActivation := currEpoch + MaxProveCommitDuration[precommit.SealProof]
-		validateExpiration(rt, maxActivation, precommit.Expiration, precommit.SealProof)
-
-		if precommit.ReplaceCapacity && len(precommit.DealIDs) == 0 {
-			rt.Abortf(exitcode.ErrIllegalArgument, "cannot replace sector without committing deals")
-		}
-		if precommit.ReplaceSectorDeadline >= WPoStPeriodDeadlines {
-			rt.Abortf(exitcode.ErrIllegalArgument, "invalid deadline %d", precommit.ReplaceSectorDeadline)
-		}
-		if precommit.ReplaceSectorNumber > abi.MaxSectorNumber {
-			rt.Abortf(exitcode.ErrIllegalArgument, "invalid sector number %d", precommit.ReplaceSectorNumber)
-		}
-
-		sectorsDeals[i] = market.SectorDeals{
-			SectorExpiry: precommit.Expiration,
-			DealIDs:      precommit.DealIDs,
-		}
+	if params.ReplaceCapacity && len(params.DealIDs) == 0 {
+		rt.Abortf(exitcode.ErrIllegalArgument, "cannot replace sector without committing deals")
+	}
+	if params.ReplaceSectorDeadline >= WPoStPeriodDeadlines {
+		rt.Abortf(exitcode.ErrIllegalArgument, "invalid deadline %d", params.ReplaceSectorDeadline)
+	}
+	if params.ReplaceSectorNumber > abi.MaxSectorNumber {
+		rt.Abortf(exitcode.ErrIllegalArgument, "invalid sector number %d", params.ReplaceSectorNumber)
 	}
 
 	// gather information from other actors
+
 	rewardStats := requestCurrentEpochBlockReward(rt)
 	pwrTotal := requestCurrentTotalPower(rt)
-	dealWeights := requestDealWeights(rt, sectorsDeals)
-
-	if len(dealWeights.Sectors) != len(params.Sectors) {
-		rt.Abortf(exitcode.ErrIllegalState, "deal weight request returned %d records, expected %d",
-			len(dealWeights.Sectors), len(params.Sectors))
+	dealWeights := requestDealWeights(rt, []market.SectorDeals{
+		{
+			SectorExpiry: params.Expiration,
+			DealIDs:      params.DealIDs,
+		},
+	})
+	if len(dealWeights.Sectors) == 0 {
+		rt.Abortf(exitcode.ErrIllegalState, "deal weight request returned no records")
 	}
+	dealWeight := dealWeights.Sectors[0]
 
 	store := adt.AsStore(rt)
 	var st State
 	var err error
+	newlyVested := big.Zero()
 	feeToBurn := abi.NewTokenAmount(0)
 	var needsCron bool
 	rt.StateTransaction(&st, func() {
@@ -762,198 +719,92 @@ func (a Actor) PreCommitSectorBatch(rt Runtime, params *PreCommitSectorBatchPara
 		info := getMinerInfo(rt, &st)
 		rt.ValidateImmediateCallerIs(append(info.ControlAddresses, info.Owner, info.Worker)...)
 
-		if ConsensusFaultActive(info, currEpoch) {
-			rt.Abortf(exitcode.ErrForbidden, "pre-commit not allowed during active consensus fault")
+		if ConsensusFaultActive(info, rt.CurrEpoch()) {
+			rt.Abortf(exitcode.ErrForbidden, "precommit not allowed during active consensus fault")
 		}
 
-		chainInfos := make([]*SectorPreCommitOnChainInfo, len(params.Sectors))
-		totalDepositRequired := big.Zero()
-		cleanUpEvents := map[abi.ChainEpoch][]uint64{}
+		// From network version 7, the pre-commit seal type must have the same Window PoSt proof type as the miner,
+		// rather than be exactly the same seal type.
+		// This permits a transition window from V1 to V1_1 seal types (which share Window PoSt proof type).
+		sectorWPoStProof, err := params.SealProof.RegisteredWindowPoStProof()
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalArgument, "failed to lookup Window PoSt proof type for sector seal proof %d", params.SealProof)
+		if sectorWPoStProof != info.WindowPoStProofType {
+			rt.Abortf(exitcode.ErrIllegalArgument, "sector Window PoSt proof type %d must match miner Window PoSt proof type %d (seal proof type %d)",
+				sectorWPoStProof, info.WindowPoStProofType, params.SealProof)
+		}
+
 		dealCountMax := SectorDealsMax(info.SectorSize)
-		for i, precommit := range params.Sectors {
-			// Sector must have the same Window PoSt proof type as the miner's recorded seal type.
-			sectorWPoStProof, err := precommit.SealProof.RegisteredWindowPoStProof()
-			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalArgument, "failed to lookup Window PoSt proof type for sector seal proof %d", precommit.SealProof)
-			if sectorWPoStProof != info.WindowPoStProofType {
-				rt.Abortf(exitcode.ErrIllegalArgument, "sector Window PoSt proof type %d must match miner Window PoSt proof type %d (seal proof type %d)",
-					sectorWPoStProof, info.WindowPoStProofType, precommit.SealProof)
-			}
-
-			if uint64(len(precommit.DealIDs)) > dealCountMax {
-				rt.Abortf(exitcode.ErrIllegalArgument, "too many deals for sector %d > %d", len(precommit.DealIDs), dealCountMax)
-			}
-
-			// Ensure total deal space does not exceed sector size.
-			dealWeight := dealWeights.Sectors[i]
-			if dealWeight.DealSpace > uint64(info.SectorSize) {
-				rt.Abortf(exitcode.ErrIllegalArgument, "deals too large to fit in sector %d > %d", dealWeight.DealSpace, info.SectorSize)
-			}
-
-			if precommit.ReplaceCapacity {
-				validateReplaceSector(rt, &st, store, &precommit)
-			}
-
-			// Estimate the sector weight using the current epoch as an estimate for activation,
-			// and compute the pre-commit deposit using that weight.
-			// The sector's power will be recalculated when it's proven.
-			duration := precommit.Expiration - currEpoch
-			sectorWeight := QAPowerForWeight(info.SectorSize, duration, dealWeight.DealWeight, dealWeight.VerifiedDealWeight)
-			depositReq := PreCommitDepositForPower(rewardStats.ThisEpochRewardSmoothed, pwrTotal.QualityAdjPowerSmoothed, sectorWeight)
-
-			// Build on-chain record.
-			chainInfos[i] = &SectorPreCommitOnChainInfo{
-				Info:               SectorPreCommitInfo(precommit),
-				PreCommitDeposit:   depositReq,
-				PreCommitEpoch:     currEpoch,
-				DealWeight:         dealWeight.DealWeight,
-				VerifiedDealWeight: dealWeight.VerifiedDealWeight,
-			}
-			totalDepositRequired = big.Add(totalDepositRequired, depositReq)
-
-			// Calculate pre-commit cleanup
-			msd, ok := MaxProveCommitDuration[precommit.SealProof]
-			if !ok {
-				rt.Abortf(exitcode.ErrIllegalArgument, "no max seal duration set for proof type: %d", precommit.SealProof)
-			}
-			// PreCommitCleanUpDelay > 0 here is critical for the batch verification of proofs. Without it, if a proof arrived exactly on the
-			// due epoch, ProveCommitSector would accept it, then the expiry event would remove it, and then
-			// ConfirmSectorProofsValid would fail to find it.
-			cleanUpBound := currEpoch + msd + ExpiredPreCommitCleanUpDelay
-			cleanUpEvents[cleanUpBound] = append(cleanUpEvents[cleanUpBound], uint64(precommit.SectorNumber))
+		if uint64(len(params.DealIDs)) > dealCountMax {
+			rt.Abortf(exitcode.ErrIllegalArgument, "too many deals for sector %d > %d", len(params.DealIDs), dealCountMax)
 		}
 
-		// Batch update actor state.
-		if availableBalance.LessThan(totalDepositRequired) {
-			rt.Abortf(exitcode.ErrInsufficientFunds, "insufficient funds %v for pre-commit deposit: %v", availableBalance, totalDepositRequired)
+		// Ensure total deal space does not exceed sector size.
+		if dealWeight.DealSpace > uint64(info.SectorSize) {
+			rt.Abortf(exitcode.ErrIllegalArgument, "deals too large to fit in sector %d > %d", dealWeight.DealSpace, info.SectorSize)
 		}
-		err = st.AddPreCommitDeposit(totalDepositRequired)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to add pre-commit deposit %v", totalDepositRequired)
 
-		err = st.AllocateSectorNumbers(store, sectorNumbers, DenyCollisions)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to allocate sector ids %v", sectorNumbers)
+		err = st.AllocateSectorNumber(store, params.SectorNumber)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to allocate sector id %d", params.SectorNumber)
 
-		err = st.PutPrecommittedSectors(store, chainInfos...)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to write pre-committed sectors")
+		// This sector check is redundant given the allocated sectors bitfield, but remains for safety.
+		sectorFound, err := st.HasSectorNo(store, params.SectorNumber)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to check sector %v", params.SectorNumber)
+		if sectorFound {
+			rt.Abortf(exitcode.ErrIllegalState, "sector %v already committed", params.SectorNumber)
+		}
 
-		err = st.AddPreCommitCleanUps(store, cleanUpEvents)
+		if params.ReplaceCapacity {
+			validateReplaceSector(rt, &st, store, params)
+		}
+
+		duration := params.Expiration - rt.CurrEpoch()
+		sectorWeight := QAPowerForWeight(info.SectorSize, duration, dealWeight.DealWeight, dealWeight.VerifiedDealWeight)
+		depositReq := PreCommitDepositForPower(rewardStats.ThisEpochRewardSmoothed, pwrTotal.QualityAdjPowerSmoothed, sectorWeight)
+		if availableBalance.LessThan(depositReq) {
+			rt.Abortf(exitcode.ErrInsufficientFunds, "insufficient funds for pre-commit deposit: %v", depositReq)
+		}
+
+		err = st.AddPreCommitDeposit(depositReq)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to add pre-commit deposit %v", depositReq)
+
+		if err := st.PutPrecommittedSector(store, &SectorPreCommitOnChainInfo{
+			Info:               SectorPreCommitInfo(*params),
+			PreCommitDeposit:   depositReq,
+			PreCommitEpoch:     rt.CurrEpoch(),
+			DealWeight:         dealWeight.DealWeight,
+			VerifiedDealWeight: dealWeight.VerifiedDealWeight,
+		}); err != nil {
+			rt.Abortf(exitcode.ErrIllegalState, "failed to write pre-committed sector %v: %v", params.SectorNumber, err)
+		}
+		// add precommit expiry to the queue
+		msd, ok := MaxProveCommitDuration[params.SealProof]
+		if !ok {
+			rt.Abortf(exitcode.ErrIllegalArgument, "no max seal duration set for proof type: %d", params.SealProof)
+		}
+		// The +1 here is critical for the batch verification of proofs. Without it, if a proof arrived exactly on the
+		// due epoch, ProveCommitSector would accept it, then the expiry event would remove it, and then
+		// ConfirmSectorProofsValid would fail to find it.
+		expiryBound := rt.CurrEpoch() + msd + 1
+
+		err = st.AddPreCommitExpiry(store, expiryBound, params.SectorNumber)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to add pre-commit expiry to queue")
 
-		// Activate miner cron
+		// activate miner cron
 		needsCron = !st.DeadlineCronActive
 		st.DeadlineCronActive = true
 	})
-
 	burnFunds(rt, feeToBurn)
 	rt.StateReadonly(&st)
 	err = st.CheckBalanceInvariants(rt.CurrentBalance())
 	builtin.RequireNoErr(rt, err, ErrBalanceInvariantBroken, "balance invariants broken")
 	if needsCron {
-		newDlInfo := st.DeadlineInfo(currEpoch)
+		newDlInfo := st.DeadlineInfo(rt.CurrEpoch())
 		enrollCronEvent(rt, newDlInfo.Last(), &CronEventPayload{
 			EventType: CronEventProvingDeadline,
 		})
 	}
 
-	return nil
-}
-
-type ProveCommitAggregateParams struct {
-	SectorNumbers  bitfield.BitField
-	AggregateProof []byte
-}
-
-// Checks state of the corresponding sector pre-commitments and verifies aggregate proof of replication
-// of these sectors. If valid, the sectors' deals are activated, sectors are assigned a deadline and charged pledge
-// and precommit state is removed.
-func (a Actor) ProveCommitAggregate(rt Runtime, params *ProveCommitAggregateParams) *abi.EmptyValue {
-	rt.ValidateImmediateCallerAcceptAny()
-	aggSectorsCount, err := params.SectorNumbers.Count()
-	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to count aggregated sectors")
-	if aggSectorsCount > MaxAggregatedSectors {
-		rt.Abortf(exitcode.ErrIllegalArgument, "too many sectors addressed, addressed %d want <= %d", aggSectorsCount, MaxAggregatedSectors)
-	} else if aggSectorsCount < MinAggregatedSectors {
-		rt.Abortf(exitcode.ErrIllegalArgument, "too few sectors addressed, addressed %d want >= %d", aggSectorsCount, MinAggregatedSectors)
-	}
-
-	if uint64(len(params.AggregateProof)) > MaxAggregateProofSize {
-		rt.Abortf(exitcode.ErrIllegalArgument, "sector prove-commit proof of size %d exceeds max size of %d",
-			len(params.AggregateProof), MaxAggregateProofSize)
-	}
-
-	store := adt.AsStore(rt)
-	var st State
-	rt.StateReadonly(&st)
-
-	precommits, err := st.GetAllPrecommittedSectors(store, params.SectorNumbers)
-	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get precommits")
-
-	// compute data commitments and validate each precommit
-	computeDataCommitmentsInputs := make([]*market.SectorDataSpec, len(precommits))
-	precommitsToConfirm := []*SectorPreCommitOnChainInfo{}
-	for i, precommit := range precommits {
-		msd, ok := MaxProveCommitDuration[precommit.Info.SealProof]
-		if !ok {
-			rt.Abortf(exitcode.ErrIllegalState, "no max seal duration for proof type: %d", precommit.Info.SealProof)
-		}
-		proveCommitDue := precommit.PreCommitEpoch + msd
-		if rt.CurrEpoch() > proveCommitDue {
-			rt.Log(rtt.WARN, "skipping commitment for sector %d, too late at %d, due %d", precommit.Info.SectorNumber, rt.CurrEpoch(), proveCommitDue)
-		} else {
-			precommitsToConfirm = append(precommitsToConfirm, precommit)
-		}
-		// All sealProof types should match
-		if i >= 1 {
-			prevSealProof := precommits[i-1].Info.SealProof
-			builtin.RequireState(rt, prevSealProof == precommit.Info.SealProof, "aggregate contains mismatched seal proofs %d and %d", prevSealProof, precommit.Info.SealProof)
-		}
-
-		computeDataCommitmentsInputs[i] = &market.SectorDataSpec{
-			SectorType: precommit.Info.SealProof,
-			DealIDs:    precommit.Info.DealIDs,
-		}
-	}
-
-	// compute shared verification inputs
-	commDs := requestUnsealedSectorCIDs(rt, computeDataCommitmentsInputs...)
-	svis := make([]proof.AggregateSealVerifyInfo, 0)
-	receiver := rt.Receiver()
-	minerActorID, err := addr.IDFromAddress(receiver)
-	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "runtime provided non-ID receiver address %s", receiver)
-	buf := new(bytes.Buffer)
-	err = receiver.MarshalCBOR(buf)
-	receiverBytes := buf.Bytes()
-	builtin.RequireNoErr(rt, err, exitcode.ErrSerialization, "failed to marshal address for seal verification challenge")
-
-	for i, precommit := range precommits {
-		interactiveEpoch := precommit.PreCommitEpoch + PreCommitChallengeDelay
-		if rt.CurrEpoch() <= interactiveEpoch {
-			rt.Abortf(exitcode.ErrForbidden, "too early to prove sector %d", precommit.Info.SectorNumber)
-		}
-
-		svInfoRandomness := rt.GetRandomnessFromTickets(crypto.DomainSeparationTag_SealRandomness, precommit.Info.SealRandEpoch, receiverBytes)
-		svInfoInteractiveRandomness := rt.GetRandomnessFromBeacon(crypto.DomainSeparationTag_InteractiveSealChallengeSeed, interactiveEpoch, receiverBytes)
-		svi := proof.AggregateSealVerifyInfo{
-			Number:                precommit.Info.SectorNumber,
-			InteractiveRandomness: abi.InteractiveSealRandomness(svInfoInteractiveRandomness),
-			Randomness:            abi.SealRandomness(svInfoRandomness),
-			SealedCID:             precommit.Info.SealedCID,
-			UnsealedCID:           commDs[i],
-		}
-		svis = append(svis, svi)
-	}
-
-	sealProof := precommits[0].Info.SealProof
-	builtin.RequireState(rt, len(precommits) > 0, "bitfield non-empty but zero precommits read from state")
-	err = rt.VerifyAggregateSeals(
-		proof.AggregateSealVerifyProofAndInfos{
-			Infos:          svis,
-			Proof:          params.AggregateProof,
-			Miner:          abi.ActorID(minerActorID),
-			SealProof:      sealProof,
-			AggregateProof: abi.RegisteredAggregationProof_SnarkPackV1,
-		})
-	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalArgument, "aggregate seal verify failed")
-	confirmSectorProofsValid(rt, precommitsToConfirm)
+	notifyPledgeChanged(rt, newlyVested.Neg())
 
 	return nil
 }
@@ -1034,20 +885,6 @@ func (a Actor) ConfirmSectorProofsValid(rt Runtime, params *builtin.ConfirmSecto
 		)
 	}
 
-	var st State
-	rt.StateReadonly(&st)
-	store := adt.AsStore(rt)
-
-	// This skips missing pre-commits.
-	precommittedSectors, err := st.FindPrecommittedSectors(store, params.Sectors...)
-	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load pre-committed sectors")
-
-	confirmSectorProofsValid(rt, precommittedSectors)
-
-	return nil
-}
-
-func confirmSectorProofsValid(rt Runtime, preCommits []*SectorPreCommitOnChainInfo) {
 	// get network stats from other actors
 	rewardStats := requestCurrentEpochBlockReward(rt)
 	pwrTotal := requestCurrentTotalPower(rt)
@@ -1065,12 +902,24 @@ func confirmSectorProofsValid(rt Runtime, preCommits []*SectorPreCommitOnChainIn
 	// Ideally, we'd combine some of these operations, but at least we have
 	// a constant number of them.
 
+	var st State
+	rt.StateReadonly(&st)
+	store := adt.AsStore(rt)
+	info := getMinerInfo(rt, &st)
+
+	//
+	// Activate storage deals.
+	//
+
+	// This skips missing pre-commits.
+	precommittedSectors, err := st.FindPrecommittedSectors(store, params.Sectors...)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load pre-committed sectors")
+
 	// Committed-capacity sectors licensed for early removal by new sectors being proven.
 	replaceSectors := make(DeadlineSectorMap)
-	activation := rt.CurrEpoch()
 	// Pre-commits for new sectors.
-	var validPreCommits []*SectorPreCommitOnChainInfo
-	for _, precommit := range preCommits {
+	var preCommits []*SectorPreCommitOnChainInfo
+	for _, precommit := range precommittedSectors {
 		if len(precommit.Info.DealIDs) > 0 {
 			// Check (and activate) storage deals associated to sector. Abort if checks failed.
 			// TODO: we should batch these calls...
@@ -1092,7 +941,7 @@ func confirmSectorProofsValid(rt Runtime, preCommits []*SectorPreCommitOnChainIn
 			}
 		}
 
-		validPreCommits = append(validPreCommits, precommit)
+		preCommits = append(preCommits, precommit)
 
 		if precommit.Info.ReplaceCapacity {
 			err := replaceSectors.AddValues(
@@ -1105,7 +954,7 @@ func confirmSectorProofsValid(rt Runtime, preCommits []*SectorPreCommitOnChainIn
 	}
 
 	// When all prove commits have failed abort early
-	if len(validPreCommits) == 0 {
+	if len(preCommits) == 0 {
 		rt.Abortf(exitcode.ErrIllegalArgument, "all prove commits failed to validate")
 	}
 
@@ -1113,25 +962,25 @@ func confirmSectorProofsValid(rt Runtime, preCommits []*SectorPreCommitOnChainIn
 	depositToUnlock := big.Zero()
 	newSectors := make([]*SectorOnChainInfo, 0)
 	newlyVested := big.Zero()
-	var st State
-	store := adt.AsStore(rt)
 	rt.StateTransaction(&st, func() {
-		info := getMinerInfo(rt, &st)
 		// Schedule expiration for replaced sectors to the end of their next deadline window.
 		// They can't be removed right now because we want to challenge them immediately before termination.
 		replaced, err := st.RescheduleSectorExpirations(store, rt.CurrEpoch(), info.SectorSize, replaceSectors)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to replace sector expirations")
 		replacedBySectorNumber := asMapBySectorNumber(replaced)
 
-		newSectorNos := make([]abi.SectorNumber, 0, len(validPreCommits))
-		for _, precommit := range validPreCommits {
+		newSectorNos := make([]abi.SectorNumber, 0, len(preCommits))
+		for _, precommit := range preCommits {
 			// compute initial pledge
+			activation := rt.CurrEpoch()
 			duration := precommit.Info.Expiration - activation
+
 			// This should have been caught in precommit, but don't let other sectors fail because of it.
 			if duration < MinSectorExpiration {
 				rt.Log(rtt.WARN, "precommit %d has lifetime %d less than minimum. ignoring", precommit.Info.SectorNumber, duration, MinSectorExpiration)
 				continue
 			}
+
 			pwr := QAPowerForWeight(info.SectorSize, duration, precommit.DealWeight, precommit.VerifiedDealWeight)
 			dayReward := ExpectedRewardForPower(rewardStats.ThisEpochRewardSmoothed, pwrTotal.QualityAdjPowerSmoothed, pwr, builtin.EpochsInDay)
 			// The storage pledge is recorded for use in computing the penalty if this sector is terminated
@@ -1195,6 +1044,7 @@ func confirmSectorProofsValid(rt Runtime, preCommits []*SectorPreCommitOnChainIn
 
 	// Request pledge update for activated sector.
 	notifyPledgeChanged(rt, big.Sub(totalPledge, newlyVested))
+	return nil
 }
 
 //type CheckSectorProvenParams struct {
@@ -1329,7 +1179,7 @@ func (a Actor) ExtendSectorExpiration(rt Runtime, params *ExtendSectorExpiration
 				builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load sectors in deadline %v partition %v", dlIdx, decl.Partition)
 				newSectors := make([]*SectorOnChainInfo, len(oldSectors))
 				for i, sector := range oldSectors {
-					if !CanExtendSealProofType(sector.SealProof) {
+					if !CanExtendSealProofType(sector.SealProof, rt.NetworkVersion()) {
 						rt.Abortf(exitcode.ErrForbidden, "cannot extend expiration for sector %v with unsupported seal type %v",
 							sector.SectorNumber, sector.SealProof)
 					}
@@ -1805,7 +1655,7 @@ func (a Actor) CompactSectorNumbers(rt Runtime, params *CompactSectorNumbersPara
 		info := getMinerInfo(rt, &st)
 		rt.ValidateImmediateCallerIs(append(info.ControlAddresses, info.Owner, info.Worker)...)
 
-		err := st.AllocateSectorNumbers(store, params.MaskSectorNumbers, AllowCollisions)
+		err := st.MaskSectorNumbers(store, params.MaskSectorNumbers)
 
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to mask sector numbers")
 	})
@@ -1904,9 +1754,8 @@ func (a Actor) ReportConsensusFault(rt Runtime, params *ReportConsensusFaultPara
 	rewardStats := requestCurrentEpochBlockReward(rt)
 	// The policy amounts we should burn and send to reporter
 	// These may differ from actual funds send when miner goes into fee debt
-	thisEpochReward := rewardStats.ThisEpochRewardSmoothed.Estimate()
-	faultPenalty := ConsensusFaultPenalty(thisEpochReward)
-	slasherReward := RewardForConsensusSlashReport(thisEpochReward)
+	faultPenalty := ConsensusFaultPenalty(rewardStats.ThisEpochRewardSmoothed.Estimate())
+	slasherReward := RewardForConsensusSlashReport(faultAge, faultPenalty)
 	pledgeDelta := big.Zero()
 
 	// The amounts actually sent to burnt funds and reporter
@@ -2084,7 +1933,7 @@ func processEarlyTerminations(rt Runtime) (more bool) {
 
 	// TODO: We're using the current power+epoch reward. Technically, we
 	// should use the power/reward at the time of termination.
-	// https://github.com/filecoin-project/specs-actors/v5/pull/648
+	// https://github.com/filecoin-project/specs-actors/v4/pull/648
 	rewardStats := requestCurrentEpochBlockReward(rt)
 	pwrTotal := requestCurrentTotalPower(rt)
 
@@ -2203,7 +2052,7 @@ func handleProvingDeadline(rt Runtime) {
 		}
 
 		{
-			depositToBurn, err := st.CleanUpExpiredPreCommits(store, currEpoch)
+			depositToBurn, err := st.ExpirePreCommits(store, currEpoch)
 			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to expire pre-committed sectors")
 
 			err = st.ApplyPenalty(depositToBurn)
@@ -2295,7 +2144,7 @@ func validateExpiration(rt Runtime, activation, expiration abi.ChainEpoch, sealP
 	}
 
 	// total sector lifetime cannot exceed SectorMaximumLifetime for the sector's seal proof
-	maxLifetime, err := builtin.SealProofSectorMaximumLifetime(sealProof)
+	maxLifetime, err := builtin.SealProofSectorMaximumLifetime(sealProof, rt.NetworkVersion())
 	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalArgument, "unrecognized seal proof type %d", sealProof)
 	if expiration-activation > maxLifetime {
 		rt.Abortf(exitcode.ErrIllegalArgument, "invalid expiration %d, total sector lifetime (%d) cannot exceed %d after activation %d",
@@ -2303,7 +2152,7 @@ func validateExpiration(rt Runtime, activation, expiration abi.ChainEpoch, sealP
 	}
 }
 
-func validateReplaceSector(rt Runtime, st *State, store adt.Store, params *miner0.SectorPreCommitInfo) {
+func validateReplaceSector(rt Runtime, st *State, store adt.Store, params *PreCommitSectorParams) {
 	replaceSector, found, err := st.GetSector(store, params.ReplaceSectorNumber)
 	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load sector %v", params.SectorNumber)
 	if !found {
@@ -2455,10 +2304,7 @@ func getVerifyInfo(rt Runtime, params *SealVerifyStuff) *proof.SealVerifyInfo {
 		rt.Abortf(exitcode.ErrForbidden, "too early to prove sector")
 	}
 
-	commDs := requestUnsealedSectorCIDs(rt, &market.SectorDataSpec{
-		SectorType: params.RegisteredSealProof,
-		DealIDs:    params.DealIDs,
-	})
+	commD := requestUnsealedSectorCID(rt, params.RegisteredSealProof, params.DealIDs)
 
 	minerActorID, err := addr.IDFromAddress(rt.Receiver())
 	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "runtime provided non-ID receiver address %v", rt.Receiver())
@@ -2482,32 +2328,25 @@ func getVerifyInfo(rt Runtime, params *SealVerifyStuff) *proof.SealVerifyInfo {
 		Proof:                 params.Proof,
 		Randomness:            abi.SealRandomness(svInfoRandomness),
 		SealedCID:             params.SealedCID,
-		UnsealedCID:           commDs[0],
+		UnsealedCID:           commD,
 	}
 }
 
 // Requests the storage market actor compute the unsealed sector CID from a sector's deals.
-func requestUnsealedSectorCIDs(rt Runtime, dataCommitmentInputs ...*market.SectorDataSpec) []cid.Cid {
-	if len(dataCommitmentInputs) == 0 {
-		return nil
-	}
-	var ret market.ComputeDataCommitmentReturn
+func requestUnsealedSectorCID(rt Runtime, proofType abi.RegisteredSealProof, dealIDs []abi.DealID) cid.Cid {
+	var unsealedCID cbg.CborCid
 	code := rt.Send(
 		builtin.StorageMarketActorAddr,
 		builtin.MethodsMarket.ComputeDataCommitment,
 		&market.ComputeDataCommitmentParams{
-			Inputs: dataCommitmentInputs,
+			SectorType: proofType,
+			DealIDs:    dealIDs,
 		},
 		abi.NewTokenAmount(0),
-		&ret,
+		&unsealedCID,
 	)
-	builtin.RequireSuccess(rt, code, "failed request for unsealed sector CIDs")
-	builtin.RequireState(rt, len(dataCommitmentInputs) == len(ret.CommDs), "number of data commitments computed %d does not match number of data commitment inputs %d", len(ret.CommDs), len(dataCommitmentInputs))
-	unsealedCIDs := make([]cid.Cid, len(ret.CommDs))
-	for i, cbgCid := range ret.CommDs {
-		unsealedCIDs[i] = cid.Cid(cbgCid)
-	}
-	return unsealedCIDs
+	builtin.RequireSuccess(rt, code, "failed request for unsealed sector CID for deals %v", dealIDs)
+	return cid.Cid(unsealedCID)
 }
 
 func requestDealWeights(rt Runtime, sectors []market.SectorDeals) *market.VerifyDealsForActivationReturn {
