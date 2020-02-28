@@ -11,19 +11,20 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/exitcode"
+	"github.com/filecoin-project/go-state-types/network"
 	cid "github.com/ipfs/go-cid"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	initact "github.com/filecoin-project/specs-actors/v5/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/market"
-	mineract "github.com/filecoin-project/specs-actors/v5/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v5/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v5/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v5/support/testing"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	initact "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	mineract "github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v4/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -96,11 +97,11 @@ func TestCreateMinerFailures(t *testing.T) {
 		rt, ac := basicPowerSetup(t)
 
 		createMinerParams := &power.CreateMinerParams{
-			Owner:               owner,
-			Worker:              owner,
-			WindowPoStProofType: windowPoStProofType,
-			Peer:                peer,
-			Multiaddrs:          mAddr,
+			Owner:                owner,
+			Worker:               owner,
+			WindowPoStProofType:  windowPoStProofType,
+			Peer:                 peer,
+			Multiaddrs:           mAddr,
 		}
 
 		// owner send CreateMiner to Actor
@@ -327,16 +328,19 @@ func TestPowerAndPledgeAccounting(t *testing.T) {
 
 	t.Run("new miner updates MinerAboveMinPowerCount", func(t *testing.T) {
 		for _, test := range []struct {
+			version        network.Version
 			proof          abi.RegisteredPoStProof
 			expectedMiners int64
 		}{{
+			version:        network.Version7,
 			proof:          abi.RegisteredPoStProof_StackedDrgWindow2KiBV1, // 2K sectors have zero consensus minimum
 			expectedMiners: 1,
 		}, {
+			version:        network.Version7,
 			proof:          abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
 			expectedMiners: 0,
 		}} {
-			rt := builder.Build(t)
+			rt := builder.WithNetworkVersion(test.version).Build(t)
 			actor.constructAndVerify(rt)
 			actor.windowPoStProof = test.proof
 			actor.createMinerBasic(rt, owner, owner, miner1)
@@ -1079,18 +1083,18 @@ func verifyEmptyMap(t testing.TB, rt *mock.Runtime, cid cid.Cid) {
 
 type spActorHarness struct {
 	power.Actor
-	t               *testing.T
-	minerSeq        int
-	sealProof       abi.RegisteredSealProof
-	windowPoStProof abi.RegisteredPoStProof
+	t                *testing.T
+	minerSeq         int
+	sealProof        abi.RegisteredSealProof
+	windowPoStProof  abi.RegisteredPoStProof
 }
 
 func newHarness(t *testing.T) *spActorHarness {
 	return &spActorHarness{
-		Actor:           power.Actor{},
-		t:               t,
-		sealProof:       abi.RegisteredSealProof_StackedDrg32GiBV1_1,
-		windowPoStProof: abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
+		Actor:            power.Actor{},
+		t:                t,
+		sealProof:        abi.RegisteredSealProof_StackedDrg32GiBV1_1,
+		windowPoStProof:  abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
 	}
 }
 
@@ -1155,11 +1159,11 @@ func (h *spActorHarness) createMiner(rt *mock.Runtime, owner, worker, miner, rob
 	prevMinerCount := st.MinerCount
 
 	createMinerParams := &power.CreateMinerParams{
-		Owner:               owner,
-		Worker:              worker,
-		WindowPoStProofType: windowPoStProofType,
-		Peer:                peer,
-		Multiaddrs:          multiaddrs,
+		Owner:                owner,
+		Worker:               worker,
+		WindowPoStProofType:  windowPoStProofType,
+		Peer:                 peer,
+		Multiaddrs:           multiaddrs,
 	}
 
 	// owner send CreateMiner to Actor
@@ -1313,7 +1317,6 @@ func (h *spActorHarness) enrollCronEvent(rt *mock.Runtime, miner addr.Address, e
 }
 
 func (h *spActorHarness) submitPoRepForBulkVerify(rt *mock.Runtime, minerAddr addr.Address, sealInfo *proof.SealVerifyInfo) {
-	rt.ExpectGasCharged(power.GasOnSubmitVerifySeal)
 	rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 	rt.SetCaller(minerAddr, builtin.StorageMinerActorCodeID)
 	rt.Call(h.Actor.SubmitPoRepForBulkVerify, sealInfo)
@@ -1346,11 +1349,11 @@ func (h *spActorHarness) checkState(rt *mock.Runtime) {
 
 func initCreateMinerBytes(t testing.TB, owner, worker addr.Address, peer abi.PeerID, multiaddrs []abi.Multiaddrs, windowPoStProofType abi.RegisteredPoStProof) []byte {
 	params := &power.MinerConstructorParams{
-		OwnerAddr:           owner,
-		WorkerAddr:          worker,
-		WindowPoStProofType: windowPoStProofType,
-		PeerId:              peer,
-		Multiaddrs:          multiaddrs,
+		OwnerAddr:            owner,
+		WorkerAddr:           worker,
+		WindowPoStProofType:  windowPoStProofType,
+		PeerId:               peer,
+		Multiaddrs:           multiaddrs,
 	}
 
 	buf := new(bytes.Buffer)
