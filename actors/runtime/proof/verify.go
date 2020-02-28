@@ -1,9 +1,7 @@
 package proof
 
 import (
-	"github.com/filecoin-project/go-state-types/abi"
 	proof0 "github.com/filecoin-project/specs-actors/actors/runtime/proof"
-	"github.com/ipfs/go-cid"
 )
 
 ///
@@ -24,24 +22,6 @@ import (
 //	UnsealedCID cid.Cid `checked:"true"` // CommD
 //}
 type SealVerifyInfo = proof0.SealVerifyInfo
-
-type AggregateSealVerifyInfo struct {
-	Number                abi.SectorNumber
-	Randomness            abi.SealRandomness
-	InteractiveRandomness abi.InteractiveSealRandomness
-
-	// Safe because we get those from the miner actor
-	SealedCID   cid.Cid `checked:"true"` // CommR
-	UnsealedCID cid.Cid `checked:"true"` // CommD
-}
-
-type AggregateSealVerifyProofAndInfos struct {
-	Miner          abi.ActorID
-	SealProof      abi.RegisteredSealProof
-	AggregateProof abi.RegisteredAggregationProof
-	Proof          []byte
-	Infos          []AggregateSealVerifyInfo
-}
 
 ///
 /// PoSting
