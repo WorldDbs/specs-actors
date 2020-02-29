@@ -3,20 +3,19 @@ package main
 import (
 	gen "github.com/whyrusleeping/cbor-gen"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/account"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/cron"
-	init_ "github.com/filecoin-project/specs-actors/v5/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/paych"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/system"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/smoothing"
-	"github.com/filecoin-project/specs-actors/v5/support/vm"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/cron"
+	init_ "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/paych"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/system"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
 )
 
 func main() {
@@ -153,9 +152,7 @@ func main() {
 		//market.ActivateDealsParams{}, // Aliased from v0
 		market.VerifyDealsForActivationParams{},
 		market.VerifyDealsForActivationReturn{},
-		market.SectorDataSpec{},
-		market.ComputeDataCommitmentParams{},
-		market.ComputeDataCommitmentReturn{},
+		//market.ComputeDataCommitmentParams{}, // Aliased from v0
 		//market.OnMinerSectorsTerminateParams{}, // Aliased from v0
 		// other types
 		//market.DealProposal{}, // Aliased from v0
@@ -191,7 +188,6 @@ func main() {
 		//miner.ChangePeerIDParams{}, // Aliased from v0
 		//miner.ChangeMultiaddrsParams{}, // Aliased from v0
 		//miner.ProveCommitSectorParams{}, // Aliased from v0
-		miner.ProveCommitAggregateParams{},
 		//miner.ChangeWorkerAddressParams{},  // Aliased from v0
 		//miner.ExtendSectorExpirationParams{}, // Aliased from v0
 		//miner.DeclareFaultsParams{}, // Aliased from v0
@@ -204,7 +200,6 @@ func main() {
 		//miner.CompactSectorNumbersParams{}, // Aliased from v0
 		//miner.CronEventPayload{}, // Aliased from v0
 		// miner.DisputeWindowedPoStParams{}, // Aliased from v3
-		miner.PreCommitSectorBatchParams{},
 		// other types
 		//miner.FaultDeclaration{}, // Aliased from v0
 		//miner.RecoveryDeclaration{}, // Aliased from v0
@@ -230,12 +225,6 @@ func main() {
 
 	if err := gen.WriteTupleEncodersToFile("./actors/util/smoothing/cbor_gen.go", "smoothing",
 		smoothing.FilterEstimate{},
-	); err != nil {
-		panic(err)
-	}
-
-	if err := gen.WriteTupleEncodersToFile("./support/vm/cbor_gen.go", "vm",
-		vm.ChainMessage{},
 	); err != nil {
 		panic(err)
 	}
