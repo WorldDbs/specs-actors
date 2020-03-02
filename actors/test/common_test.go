@@ -1,4 +1,4 @@
-package test
+package test_test
 
 import (
 	"testing"
@@ -10,10 +10,10 @@ import (
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/market"
-	tutil "github.com/filecoin-project/specs-actors/v5/support/testing"
-	"github.com/filecoin-project/specs-actors/v5/support/vm"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	tutil "github.com/filecoin-project/specs-actors/v4/support/testing"
+	vm "github.com/filecoin-project/specs-actors/v4/support/vm"
 )
 
 func publishDeal(t *testing.T, v *vm.VM, provider, dealClient, minerID addr.Address, dealLabel string,
@@ -35,14 +35,12 @@ func publishDeal(t *testing.T, v *vm.VM, provider, dealClient, minerID addr.Addr
 
 	publishDealParams := market.PublishStorageDealsParams{
 		Deals: []market.ClientDealProposal{{
-			Proposal: deal,
-			ClientSignature: crypto.Signature{
-				Type: crypto.SigTypeBLS,
-			},
+			Proposal:        deal,
+			ClientSignature: crypto.Signature{},
 		}},
 	}
-	result := v.ApplyMessage(provider, builtin.StorageMarketActorAddr, big.Zero(), builtin.MethodsMarket.PublishStorageDeals, &publishDealParams)
-	require.Equal(t, exitcode.Ok, result.Code)
+	ret, code := v.ApplyMessage(provider, builtin.StorageMarketActorAddr, big.Zero(), builtin.MethodsMarket.PublishStorageDeals, &publishDealParams)
+	require.Equal(t, exitcode.Ok, code)
 
 	expectedPublishSubinvocations := []vm.ExpectInvocation{
 		{To: minerID, Method: builtin.MethodsMiner.ControlAddresses, SubInvocations: []vm.ExpectInvocation{}},
@@ -64,5 +62,5 @@ func publishDeal(t *testing.T, v *vm.VM, provider, dealClient, minerID addr.Addr
 		SubInvocations: expectedPublishSubinvocations,
 	}.Matches(t, v.LastInvocation())
 
-	return result.Ret.(*market.PublishStorageDealsReturn)
+	return ret.(*market.PublishStorageDealsReturn)
 }
