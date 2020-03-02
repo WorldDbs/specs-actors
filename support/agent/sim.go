@@ -15,6 +15,8 @@ import (
 	"github.com/filecoin-project/go-state-types/dline"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/filecoin-project/go-state-types/rt"
+	power2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	reward2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
 	cid "github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/pkg/errors"
@@ -22,14 +24,15 @@ import (
 
 	adt2 "github.com/filecoin-project/specs-actors/v2/actors/util/adt"
 	vm2 "github.com/filecoin-project/specs-actors/v2/support/vm"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v5/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v5/actors/states"
-	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v5/support/ipld"
-	"github.com/filecoin-project/specs-actors/v5/support/vm"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	power3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v4/actors/states"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/support/ipld"
+	vm "github.com/filecoin-project/specs-actors/v4/support/vm"
 )
 
 // Sim is a simulation framework to exercise actor code in a network-like environment.
@@ -42,11 +45,13 @@ import (
 // * Messages will be shuffled to simulate network entropy.
 // * Messages will be applied and an new VM will be created from the resulting state tree for the next tick.
 type Sim struct {
-	Config        SimConfig
-	Agents        []Agent
-	DealProviders []DealProvider
-	WinCount      uint64
-	MessageCount  uint64
+	Config                SimConfig
+	Agents                []Agent
+	DealProviders         []DealProvider
+	WinCount              uint64
+	MessageCount          uint64
+	ComputePowerTable     func(SimVM, []Agent) (PowerTable, error)
+	CreateMinerParamsFunc func(address.Address, address.Address, abi.RegisteredSealProof) (interface{}, error)
 
 	v                 SimVM
 	vmFactory         VMFactoryFunc
@@ -70,53 +75,61 @@ func NewSim(ctx context.Context, t testing.TB, blockstoreFactory func() ipldcbor
 	}
 	v.SetStatsSource(metrics)
 	minerStateFactory := func(ctx context.Context, root cid.Cid) (SimMinerState, error) {
-		return &MinerStateV5{
+		return &MinerStateV3{
 			Ctx:  ctx,
 			Root: root,
 		}, nil
 	}
 	return &Sim{
-		Config:            config,
-		Agents:            []Agent{},
-		DealProviders:     []DealProvider{},
-		v:                 v,
-		vmFactory:         vmFactory,
-		minerStateFactory: minerStateFactory,
-		rnd:               rand.New(rand.NewSource(config.Seed)),
-		blkStore:          blkStore,
-		blkStoreFactory:   blockstoreFactory,
-		ctx:               ctx,
-		t:                 t,
+		Config:                config,
+		Agents:                []Agent{},
+		DealProviders:         []DealProvider{},
+		ComputePowerTable:     ComputePowerTableV3,
+		CreateMinerParamsFunc: CreateMinerParamsV3,
+		v:                     v,
+		vmFactory:             vmFactory,
+		minerStateFactory:     minerStateFactory,
+		rnd:                   rand.New(rand.NewSource(config.Seed)),
+		blkStore:              blkStore,
+		blkStoreFactory:       blockstoreFactory,
+		ctx:                   ctx,
+		t:                     t,
 	}
 }
 
 func NewSimWithVM(ctx context.Context, t testing.TB, v SimVM, vmFactory VMFactoryFunc,
-	blkStore ipldcbor.IpldBlockstore, blockstoreFactory func() ipldcbor.IpldBlockstore,
-	minerStateFactory func(context.Context, cid.Cid) (SimMinerState, error), config SimConfig,
+	computePowerTable func(SimVM, []Agent) (PowerTable, error), blkStore ipldcbor.IpldBlockstore,
+	blockstoreFactory func() ipldcbor.IpldBlockstore, minerStateFactory func(context.Context, cid.Cid) (SimMinerState, error),
+	config SimConfig, createMinerParams func(address.Address, address.Address, abi.RegisteredSealProof) (interface{}, error),
 ) *Sim {
 	metrics := ipld.NewMetricsBlockStore(blkStore)
 	v.SetStatsSource(metrics)
 
 	return &Sim{
-		Config:            config,
-		Agents:            []Agent{},
-		DealProviders:     []DealProvider{},
-		v:                 v,
-		vmFactory:         vmFactory,
-		minerStateFactory: minerStateFactory,
-		rnd:               rand.New(rand.NewSource(config.Seed)),
-		blkStore:          blkStore,
-		blkStoreFactory:   blockstoreFactory,
-		ctx:               ctx,
-		t:                 t,
+		Config:                config,
+		Agents:                []Agent{},
+		DealProviders:         []DealProvider{},
+		ComputePowerTable:     computePowerTable,
+		CreateMinerParamsFunc: createMinerParams,
+		v:                     v,
+		vmFactory:             vmFactory,
+		minerStateFactory:     minerStateFactory,
+		rnd:                   rand.New(rand.NewSource(config.Seed)),
+		blkStore:              blkStore,
+		blkStoreFactory:       blockstoreFactory,
+		ctx:                   ctx,
+		t:                     t,
 	}
 }
 
 func (s *Sim) SwapVM(v SimVM, vmFactory VMFactoryFunc, minerStateFactory func(context.Context, cid.Cid) (SimMinerState, error),
+	computePowerTable func(SimVM, []Agent) (PowerTable, error), createMinerParams func(address.Address, address.Address, abi.RegisteredSealProof) (interface{}, error),
 ) {
 	s.v = v
 	s.vmFactory = vmFactory
 	s.minerStateFactory = minerStateFactory
+	s.ComputePowerTable = computePowerTable
+	s.CreateMinerParamsFunc = createMinerParams
 }
 
 //////////////////////////////////////////
@@ -129,7 +142,7 @@ func (s *Sim) Tick() error {
 	var err error
 	var blockMessages []message
 	// compute power table before state transition to create block rewards at the end
-	powerTable, err := s.computePowerTable(s.v, s.Agents)
+	powerTable, err := s.ComputePowerTable(s.v, s.Agents)
 	if err != nil {
 		return err
 	}
@@ -155,15 +168,15 @@ func (s *Sim) Tick() error {
 
 	// run messages
 	for _, msg := range blockMessages {
-		result := s.v.ApplyMessage(msg.From, msg.To, msg.Value, msg.Method, msg.Params)
+		ret, code := s.v.ApplyMessage(msg.From, msg.To, msg.Value, msg.Method, msg.Params)
 
 		// for now, assume everything should work
-		if result.Code != exitcode.Ok {
-			return errors.Errorf("exitcode %d: message failed: %v\n%s\n", result.Code, msg, strings.Join(s.v.GetLogs(), "\n"))
+		if code != exitcode.Ok {
+			return errors.Errorf("exitcode %d: message failed: %v\n%s\n", code, msg, strings.Join(s.v.GetLogs(), "\n"))
 		}
 
 		if msg.ReturnHandler != nil {
-			if err := msg.ReturnHandler(s, msg, result.Ret); err != nil {
+			if err := msg.ReturnHandler(s, msg, ret); err != nil {
 				return err
 			}
 		}
@@ -185,9 +198,9 @@ func (s *Sim) Tick() error {
 	}
 
 	// run cron
-	result := s.v.ApplyMessage(builtin.SystemActorAddr, builtin.CronActorAddr, big.Zero(), builtin.MethodsCron.EpochTick, nil)
-	if result.Code != exitcode.Ok {
-		return errors.Errorf("exitcode %d: cron message failed:\n%s\n", result.Code, strings.Join(s.v.GetLogs(), "\n"))
+	_, code := s.v.ApplyMessage(builtin.SystemActorAddr, builtin.CronActorAddr, big.Zero(), builtin.MethodsCron.EpochTick, nil)
+	if code != exitcode.Ok {
+		return errors.Errorf("exitcode %d: cron message failed:\n%s\n", code, strings.Join(s.v.GetLogs(), "\n"))
 	}
 
 	// store last stats
@@ -284,18 +297,8 @@ func (s *Sim) NetworkCirculatingSupply() abi.TokenAmount {
 	return s.v.GetCirculatingSupply()
 }
 
-func (s *Sim) CreateMinerParams(worker, owner address.Address, sealProof abi.RegisteredSealProof) (*power.CreateMinerParams, error) {
-	wPoStProof, err := sealProof.RegisteredWindowPoStProof()
-	if err != nil {
-		return nil, err
-	}
-
-	return &power.CreateMinerParams{
-		Owner:               owner,
-		Worker:              worker,
-		WindowPoStProofType: wPoStProof,
-	}, nil
-
+func (s *Sim) CreateMinerParams(worker, owner address.Address, sealProof abi.RegisteredSealProof) (interface{}, error) {
+	return s.CreateMinerParamsFunc(worker, owner, sealProof)
 }
 
 //////////////////////////////////////////////////
@@ -315,14 +318,14 @@ func (s *Sim) rewardMiner(addr address.Address, wins uint64) error {
 		GasReward: big.Zero(),
 		WinCount:  int64(wins),
 	}
-	result := s.v.ApplyMessage(builtin.SystemActorAddr, builtin.RewardActorAddr, big.Zero(), builtin.MethodsReward.AwardBlockReward, &rewardParams)
-	if result.Code != exitcode.Ok {
-		return errors.Errorf("exitcode %d: reward message failed:\n%s\n", result.Code, strings.Join(s.v.GetLogs(), "\n"))
+	_, code := s.v.ApplyMessage(builtin.SystemActorAddr, builtin.RewardActorAddr, big.Zero(), builtin.MethodsReward.AwardBlockReward, &rewardParams)
+	if code != exitcode.Ok {
+		return errors.Errorf("exitcode %d: reward message failed:\n%s\n", code, strings.Join(s.v.GetLogs(), "\n"))
 	}
 	return nil
 }
 
-func (s *Sim) computePowerTable(v SimVM, agents []Agent) (PowerTable, error) {
+func ComputePowerTableV3(v SimVM, agents []Agent) (PowerTable, error) {
 	pt := PowerTable{}
 
 	var rwst reward.State
@@ -351,6 +354,58 @@ func (s *Sim) computePowerTable(v SimVM, agents []Agent) (PowerTable, error) {
 		}
 	}
 	return pt, nil
+}
+
+func ComputePowerTableV2(v SimVM, agents []Agent) (PowerTable, error) {
+	pt := PowerTable{}
+
+	var rwst reward2.State
+	if err := v.GetState(builtin.RewardActorAddr, &rwst); err != nil {
+		return PowerTable{}, err
+	}
+	pt.blockReward = rwst.ThisEpochReward
+
+	var st power2.State
+	if err := v.GetState(builtin.StoragePowerActorAddr, &st); err != nil {
+		return PowerTable{}, err
+	}
+	pt.totalQAPower = st.TotalQualityAdjPower
+
+	for _, agent := range agents {
+		if miner, ok := agent.(*MinerAgent); ok {
+			if claim, found, err := st.GetClaim(v.Store(), miner.IDAddress); err != nil {
+				return pt, err
+			} else if found {
+				if sufficient, err := st.MinerNominalPowerMeetsConsensusMinimum(v.Store(), miner.IDAddress); err != nil {
+					return pt, err
+				} else if sufficient {
+					pt.minerPower = append(pt.minerPower, minerPowerTable{miner.IDAddress, claim.QualityAdjPower})
+				}
+			}
+		}
+	}
+	return pt, nil
+}
+
+func CreateMinerParamsV2(worker, owner address.Address, sealProof abi.RegisteredSealProof) (interface{}, error) {
+	return &power2.CreateMinerParams{
+		Owner:         owner,
+		Worker:        worker,
+		SealProofType: sealProof,
+	}, nil
+}
+
+func CreateMinerParamsV3(worker, owner address.Address, sealProof abi.RegisteredSealProof) (interface{}, error) {
+	wPoStProof, err := sealProof.RegisteredWindowPoStProof()
+	if err != nil {
+		return nil, err
+	}
+
+	return &power3.CreateMinerParams{
+		Owner:               owner,
+		Worker:              worker,
+		WindowPoStProofType: wPoStProof,
+	}, nil
 }
 
 func computeCircSupply(v SimVM) error {
@@ -391,7 +446,7 @@ type SimState interface {
 	AddDealProvider(d DealProvider)
 	NetworkCirculatingSupply() abi.TokenAmount
 	MinerState(addr address.Address) (SimMinerState, error)
-	CreateMinerParams(worker, owner address.Address, sealProof abi.RegisteredSealProof) (*power.CreateMinerParams, error)
+	CreateMinerParams(worker, owner address.Address, sealProof abi.RegisteredSealProof) (interface{}, error)
 
 	// randomly select an agent capable of making deals.
 	// Returns nil if no providers exist.
@@ -441,7 +496,7 @@ type PowerTable struct {
 
 // VM interface allowing a simulation to operate over multiple VM versions
 type SimVM interface {
-	ApplyMessage(from, to address.Address, value abi.TokenAmount, method abi.MethodNum, params interface{}) vm.MessageResult
+	ApplyMessage(from, to address.Address, value abi.TokenAmount, method abi.MethodNum, params interface{}) (cbor.Marshaler, exitcode.ExitCode)
 	GetCirculatingSupply() abi.TokenAmount
 	GetLogs() []string
 	GetState(addr address.Address, out cbor.Unmarshaler) error
@@ -458,6 +513,7 @@ type SimVM interface {
 }
 
 var _ SimVM = (*vm.VM)(nil)
+var _ SimVM = (*vm2.VM)(nil)
 
 type SimMinerState interface {
 	HasSectorNo(adt.Store, abi.SectorNumber) (bool, error)
