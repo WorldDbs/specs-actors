@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/support/testing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
 )
 
 func TestExpirationSet(t *testing.T) {
@@ -462,6 +462,43 @@ func TestExpirationQueue(t *testing.T) {
 		assert.True(t, set.FaultyPower.Equals(miner.NewPowerPairZero()))
 	})
 
+	t.Run("reschedule expirations then reschedule as fault", func(t *testing.T) {
+		// Create expiration 3 sets with 2 sectors apiece
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
+		require.NoError(t, err)
+
+		_, err = queue.Root()
+		require.NoError(t, err)
+
+		// reschedule 2 from second group to first
+		toReschedule := []*miner.SectorOnChainInfo{sectors[2]}
+		err = queue.RescheduleExpirations(2, toReschedule, sectorSize)
+		require.NoError(t, err)
+
+		// now reschedule one sector in first group and another in second group as faults to expire in first set
+		faults := []*miner.SectorOnChainInfo{sectors[1], sectors[2]}
+		power, err := queue.RescheduleAsFaults(4, faults, sectorSize)
+		require.NoError(t, err)
+
+		expectedPower := miner.PowerForSectors(sectorSize, faults)
+		assert.Equal(t, expectedPower, power)
+
+		// expect 0, 1, 2, 3 in first group
+		set, err := queue.PopUntil(5)
+		require.NoError(t, err)
+		assertBitfieldEquals(t, set.OnTimeSectors, 1, 2, 3)
+		assert.Equal(t, miner.PowerForSectors(sectorSize, []*miner.SectorOnChainInfo{sectors[0]}), set.ActivePower)
+		assert.Equal(t, expectedPower, set.FaultyPower)
+
+		// expect rest to come later
+		set, err = queue.PopUntil(20)
+		require.NoError(t, err)
+		assertBitfieldEquals(t, set.OnTimeSectors, 4, 5, 6)
+		assert.Equal(t, miner.PowerForSectors(sectorSize, []*miner.SectorOnChainInfo{sectors[3], sectors[4], sectors[5]}), set.ActivePower)
+		assert.Equal(t, miner.NewPowerPairZero(), set.FaultyPower)
+	})
+
 	t.Run("reschedule recover restores all sector stats", func(t *testing.T) {
 		// Create expiration 3 sets with 2 sectors apiece
 		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
@@ -591,7 +628,7 @@ func TestExpirationQueue(t *testing.T) {
 		require.NoError(t, err)
 
 		// put queue in a state where some sectors are early and some are faulty
-		_, err = queue.RescheduleAsFaults(abi.ChainEpoch(6), sectors[1:5], sectorSize)
+		_, err = queue.RescheduleAsFaults(abi.ChainEpoch(6), sectors[1:6], sectorSize)
 		require.NoError(t, err)
 
 		_, err = queue.Root()
@@ -609,9 +646,9 @@ func TestExpirationQueue(t *testing.T) {
 		require.NoError(t, err)
 
 		// assert all return values are correct
-		assertBitfieldEquals(t, removed.OnTimeSectors, 1, 4, 6)
-		assertBitfieldEquals(t, removed.EarlySectors, 5)
-		assert.Equal(t, abi.NewTokenAmount(1000+1003+1005), removed.OnTimePledge) // only on-time sectors
+		assertBitfieldEquals(t, removed.OnTimeSectors, 1, 4)
+		assertBitfieldEquals(t, removed.EarlySectors, 5, 6)
+		assert.Equal(t, abi.NewTokenAmount(1000+1003), removed.OnTimePledge) // only on-time sectors
 		assert.True(t, removed.ActivePower.Equals(miner.PowerForSectors(sectorSize, []*miner.SectorOnChainInfo{sectors[0]})))
 		assert.True(t, removed.FaultyPower.Equals(miner.PowerForSectors(sectorSize, sectors[3:6])))
 		assert.True(t, recoveringPower.Equals(miner.PowerForSectors(sectorSize, sectors[5:6])))
@@ -650,6 +687,7 @@ func TestExpirationQueue(t *testing.T) {
 		require.NoError(t, err)
 		assert.Zero(t, queue.Length())
 	})
+
 	t.Run("rescheduling no expirations leaves the queue empty", func(t *testing.T) {
 		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
 		err := queue.RescheduleExpirations(10, nil, sectorSize)
