@@ -5,11 +5,11 @@ import (
 )
 
 // Returns an estimate with position val and velocity 0
-func TestingConstantEstimate(val big.Int) *FilterEstimate {
+func TestingConstantEstimate(val big.Int) FilterEstimate {
 	return NewEstimate(val, big.Zero())
 }
 
 // Returns and estimate with postion x and velocity v
-func TestingEstimate(x, v big.Int) *FilterEstimate {
+func TestingEstimate(x, v big.Int) FilterEstimate {
 	return NewEstimate(x, v)
 }
