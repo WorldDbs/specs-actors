@@ -6,7 +6,7 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
 )
 
 func TestProvingPeriodDeadlines(t *testing.T) {
