@@ -53,7 +53,7 @@ func (v *VestingFunds) addLockedFunds(currEpoch abi.ChainEpoch, vestingSum abi.T
 
 		targetVest := big.Zero() //nolint:ineffassign
 		if elapsed < spec.VestPeriod {
-			// Linear vesting, PARAM_FINISH
+			// Linear vesting
 			targetVest = big.Div(big.Mul(vestingSum, big.NewInt(int64(elapsed))), vestPeriod)
 		} else {
 			targetVest = vestingSum
