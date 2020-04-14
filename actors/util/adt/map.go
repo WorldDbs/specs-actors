@@ -2,12 +2,12 @@ package adt
 
 import (
 	"bytes"
+	"crypto/sha256"
 
-	hamt "github.com/filecoin-project/go-hamt-ipld"
+	hamt "github.com/filecoin-project/go-hamt-ipld/v2"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/cbor"
 	cid "github.com/ipfs/go-cid"
-	"github.com/minio/sha256-simd"
 	errors "github.com/pkg/errors"
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
@@ -84,6 +84,17 @@ func (m *Map) Put(k abi.Keyer, v cbor.Marshaler) error {
 // Get puts the value at `k` into `out`.
 func (m *Map) Get(k abi.Keyer, out cbor.Unmarshaler) (bool, error) {
 	if err := m.root.Find(m.store.Context(), k.Key(), out); err != nil {
+		if err == hamt.ErrNotFound {
+			return false, nil
+		}
+		return false, errors.Wrapf(err, "map get failed find in node %v with key %v", m.lastCid, k.Key())
+	}
+	return true, nil
+}
+
+// Has checks for the existance of a key without deserializing its value.
+func (m *Map) Has(k abi.Keyer) (bool, error) {
+	if _, err := m.root.FindRaw(m.store.Context(), k.Key()); err != nil {
 		if err == hamt.ErrNotFound {
 			return false, nil
 		}
