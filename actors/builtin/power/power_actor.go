@@ -2,23 +2,21 @@ package power
 
 import (
 	"bytes"
-
-	"github.com/filecoin-project/go-address"
 	addr "github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/filecoin-project/go-state-types/exitcode"
-	rtt "github.com/filecoin-project/go-state-types/rt"
+	"github.com/filecoin-project/go-state-types/network"
+	power0 "github.com/filecoin-project/specs-actors/actors/builtin/power"
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	initact "github.com/filecoin-project/specs-actors/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/actors/runtime"
-	"github.com/filecoin-project/specs-actors/actors/runtime/proof"
-	. "github.com/filecoin-project/specs-actors/actors/util"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/actors/util/smoothing"
+	rtt "github.com/filecoin-project/go-state-types/rt"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	initact "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
 )
 
 type Runtime = runtime.Runtime
@@ -39,7 +37,7 @@ func (a Actor) Exports() []interface{} {
 		4:                         a.EnrollCronEvent,
 		5:                         a.OnEpochTickEnd,
 		6:                         a.UpdatePledgeTotal,
-		7:                         a.OnConsensusFault,
+		7:                         nil, // deprecated
 		8:                         a.SubmitPoRepForBulkVerify,
 		9:                         a.CurrentTotalPower,
 	}
@@ -61,6 +59,8 @@ var _ runtime.VMActor = Actor{}
 
 // Storage miner actor constructor params are defined here so the power actor can send them to the init actor
 // to instantiate miners.
+// Changed since v0:
+// - Added ControlAddrs
 type MinerConstructorParams struct {
 	OwnerAddr     addr.Address
 	WorkerAddr    addr.Address
@@ -68,13 +68,6 @@ type MinerConstructorParams struct {
 	SealProofType abi.RegisteredSealProof
 	PeerId        abi.PeerID
 	Multiaddrs    []abi.Multiaddrs
-}
-
-type SectorStorageWeightDesc struct {
-	SectorSize         abi.SectorSize
-	Duration           abi.ChainEpoch
-	DealWeight         abi.DealWeight
-	VerifiedDealWeight abi.DealWeight
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -94,18 +87,20 @@ func (a Actor) Constructor(rt Runtime, _ *abi.EmptyValue) *abi.EmptyValue {
 	return nil
 }
 
-type CreateMinerParams struct {
-	Owner         addr.Address
-	Worker        addr.Address
-	SealProofType abi.RegisteredSealProof
-	Peer          abi.PeerID
-	Multiaddrs    []abi.Multiaddrs
-}
+//type CreateMinerParams struct {
+//	Owner         addr.Address
+//	Worker        addr.Address
+//	SealProofType abi.RegisteredSealProof
+//	Peer          abi.PeerID
+//	Multiaddrs    []abi.Multiaddrs
+//}
+type CreateMinerParams = power0.CreateMinerParams
 
-type CreateMinerReturn struct {
-	IDAddress     addr.Address // The canonical ID-based address for the actor.
-	RobustAddress addr.Address // A more expensive but re-org-safe address for the newly created actor.
-}
+//type CreateMinerReturn struct {
+//	IDAddress     addr.Address // The canonical ID-based address for the actor.
+//	RobustAddress addr.Address // A more expensive but re-org-safe address for the newly created actor.
+//}
+type CreateMinerReturn = power0.CreateMinerReturn
 
 func (a Actor) CreateMiner(rt Runtime, params *CreateMinerParams) *CreateMinerReturn {
 	rt.ValidateImmediateCallerType(builtin.CallerTypesSignable...)
@@ -139,10 +134,16 @@ func (a Actor) CreateMiner(rt Runtime, params *CreateMinerParams) *CreateMinerRe
 		claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load claims")
 
-		err = setClaim(claims, addresses.IDAddress, &Claim{abi.NewStoragePower(0), abi.NewStoragePower(0)})
+		err = setClaim(claims, addresses.IDAddress, &Claim{params.SealProofType, abi.NewStoragePower(0), abi.NewStoragePower(0)})
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to put power in claimed table while creating miner")
 
 		st.MinerCount += 1
+
+		// starting version 7, call addToClaim to ensure new claim updates all power stats
+		if rt.NetworkVersion() >= network.Version7 {
+			err := st.updateStatsForNewMiner(params.SealProofType)
+			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed update power stats for new miner %v", addresses.IDAddress)
+		}
 
 		st.Claims, err = claims.Root()
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to flush claims")
@@ -153,10 +154,11 @@ func (a Actor) CreateMiner(rt Runtime, params *CreateMinerParams) *CreateMinerRe
 	}
 }
 
-type UpdateClaimedPowerParams struct {
-	RawByteDelta         abi.StoragePower
-	QualityAdjustedDelta abi.StoragePower
-}
+//type UpdateClaimedPowerParams struct {
+//	RawByteDelta         abi.StoragePower
+//	QualityAdjustedDelta abi.StoragePower
+//}
+type UpdateClaimedPowerParams = power0.UpdateClaimedPowerParams
 
 // Adds or removes claimed power for the calling actor.
 // May only be invoked by a miner actor.
@@ -177,10 +179,11 @@ func (a Actor) UpdateClaimedPower(rt Runtime, params *UpdateClaimedPowerParams) 
 	return nil
 }
 
-type EnrollCronEventParams struct {
-	EventEpoch abi.ChainEpoch
-	Payload    []byte
-}
+//type EnrollCronEventParams struct {
+//	EventEpoch abi.ChainEpoch
+//	Payload    []byte
+//}
+type EnrollCronEventParams = power0.EnrollCronEventParams
 
 func (a Actor) EnrollCronEvent(rt Runtime, params *EnrollCronEventParams) *abi.EmptyValue {
 	rt.ValidateImmediateCallerType(builtin.StorageMinerActorCodeID)
@@ -213,8 +216,8 @@ func (a Actor) EnrollCronEvent(rt Runtime, params *EnrollCronEventParams) *abi.E
 func (a Actor) OnEpochTickEnd(rt Runtime, _ *abi.EmptyValue) *abi.EmptyValue {
 	rt.ValidateImmediateCallerIs(builtin.CronActorAddr)
 
-	a.processDeferredCronEvents(rt)
 	a.processBatchProofVerifies(rt)
+	a.processDeferredCronEvents(rt)
 
 	var st State
 	rt.StateTransaction(&st, func() {
@@ -225,10 +228,8 @@ func (a Actor) OnEpochTickEnd(rt Runtime, _ *abi.EmptyValue) *abi.EmptyValue {
 		st.ThisEpochPledgeCollateral = st.TotalPledgeCollateral
 		st.ThisEpochQualityAdjPower = qaPower
 		st.ThisEpochRawBytePower = rawBytePower
-		delta := rt.CurrEpoch() - st.LastProcessedCronEpoch
-		st.updateSmoothedEstimate(delta)
-
-		st.LastProcessedCronEpoch = rt.CurrEpoch()
+		// we can now assume delta is one since cron is invoked on every epoch.
+		st.updateSmoothedEstimate(abi.ChainEpoch(1))
 	})
 
 	// update network KPI in RewardActor
@@ -248,42 +249,9 @@ func (a Actor) UpdatePledgeTotal(rt Runtime, pledgeDelta *abi.TokenAmount) *abi.
 	rt.ValidateImmediateCallerType(builtin.StorageMinerActorCodeID)
 	var st State
 	rt.StateTransaction(&st, func() {
+		validateMinerHasClaim(rt, st, rt.Caller())
 		st.addPledgeTotal(*pledgeDelta)
 	})
-	return nil
-}
-
-func (a Actor) OnConsensusFault(rt Runtime, pledgeAmount *abi.TokenAmount) *abi.EmptyValue {
-	rt.ValidateImmediateCallerType(builtin.StorageMinerActorCodeID)
-	minerAddr := rt.Caller()
-
-	var st State
-	rt.StateTransaction(&st, func() {
-		claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load claims")
-
-		claim, powerOk, err := getClaim(claims, minerAddr)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to read claimed power for fault")
-		if !powerOk {
-			rt.Abortf(exitcode.ErrNotFound, "miner %v not registered (already slashed?)", minerAddr)
-		}
-		Assert(claim.RawBytePower.GreaterThanEqual(big.Zero()))
-		Assert(claim.QualityAdjPower.GreaterThanEqual(big.Zero()))
-		err = st.addToClaim(claims, minerAddr, claim.RawBytePower.Neg(), claim.QualityAdjPower.Neg())
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "could not add to claim for %s after loading existing claim for this address", minerAddr)
-
-		st.addPledgeTotal(pledgeAmount.Neg())
-
-		// delete miner actor claims
-		err = claims.Delete(abi.AddrKey(minerAddr))
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to remove miner %v", minerAddr)
-
-		st.MinerCount -= 1
-
-		st.Claims, err = claims.Root()
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to flush claims")
-	})
-
 	return nil
 }
 
@@ -298,6 +266,8 @@ func (a Actor) SubmitPoRepForBulkVerify(rt Runtime, sealInfo *proof.SealVerifyIn
 
 	var st State
 	rt.StateTransaction(&st, func() {
+		validateMinerHasClaim(rt, st, minerAddr)
+
 		store := adt.AsStore(rt)
 		var mmap *adt.Multimap
 		if st.ProofValidationBatch == nil {
@@ -327,11 +297,13 @@ func (a Actor) SubmitPoRepForBulkVerify(rt Runtime, sealInfo *proof.SealVerifyIn
 	return nil
 }
 
+// Changed since v0:
+// - QualityAdjPowerSmoothed is not a pointer
 type CurrentTotalPowerReturn struct {
 	RawBytePower            abi.StoragePower
 	QualityAdjPower         abi.StoragePower
 	PledgeCollateral        abi.TokenAmount
-	QualityAdjPowerSmoothed *smoothing.FilterEstimate
+	QualityAdjPowerSmoothed smoothing.FilterEstimate
 }
 
 // Returns the total power and pledge recorded by the power actor.
@@ -355,11 +327,22 @@ func (a Actor) CurrentTotalPower(rt Runtime, _ *abi.EmptyValue) *CurrentTotalPow
 // Method utility functions
 ////////////////////////////////////////////////////////////////////////////////
 
+func validateMinerHasClaim(rt Runtime, st State, minerAddr addr.Address) {
+	claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load claims")
+
+	found, err := claims.Has(abi.AddrKey(minerAddr))
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to look up claim")
+	if !found {
+		rt.Abortf(exitcode.ErrForbidden, "unknown miner %s forbidden to interact with power actor", minerAddr)
+	}
+}
+
 func (a Actor) processBatchProofVerifies(rt Runtime) {
 	var st State
 
-	var miners []address.Address
-	verifies := make(map[address.Address][]proof.SealVerifyInfo)
+	var miners []addr.Address
+	verifies := make(map[addr.Address][]proof.SealVerifyInfo)
 
 	rt.StateTransaction(&st, func() {
 		store := adt.AsStore(rt)
@@ -369,9 +352,20 @@ func (a Actor) processBatchProofVerifies(rt Runtime) {
 		mmap, err := adt.AsMultimap(store, *st.ProofValidationBatch)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load proofs validation batch")
 
+		claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load claims")
+
 		err = mmap.ForAll(func(k string, arr *adt.Array) error {
-			a, err := address.NewFromBytes([]byte(k))
+			a, err := addr.NewFromBytes([]byte(k))
 			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to parse address key")
+
+			// refuse to process proofs for miner with no claim
+			found, err := claims.Has(abi.AddrKey(a))
+			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to look up claim")
+			if !found {
+				rt.Log(rtt.WARN, "skipping batch verifies for unknown miner %s", a)
+				return nil
+			}
 
 			miners = append(miners, a)
 
@@ -438,11 +432,23 @@ func (a Actor) processDeferredCronEvents(rt Runtime) {
 		events, err := adt.AsMultimap(adt.AsStore(rt), st.CronEventQueue)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load cron events")
 
+		claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load claims")
+
 		for epoch := st.FirstCronEpoch; epoch <= rtEpoch; epoch++ {
 			epochEvents, err := loadCronEvents(events, epoch)
 			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load cron events at %v", epoch)
 
-			cronEvents = append(cronEvents, epochEvents...)
+			for _, evt := range epochEvents {
+				// refuse to process proofs for miner with no claim
+				found, err := claims.Has(abi.AddrKey(evt.MinerAddr))
+				builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to look up claim")
+				if !found {
+					rt.Log(rtt.WARN, "skipping cron event for unknown miner %v", evt.MinerAddr)
+					continue
+				}
+				cronEvents = append(cronEvents, evt)
+			}
 
 			if len(epochEvents) > 0 {
 				err = events.RemoveAll(epochKey(epoch))
@@ -460,7 +466,7 @@ func (a Actor) processDeferredCronEvents(rt Runtime) {
 		code := rt.Send(
 			event.MinerAddr,
 			builtin.MethodsMiner.OnDeferredCronEvent,
-			runtime.CBORBytes(event.CallbackPayload),
+			builtin.CBORBytes(event.CallbackPayload),
 			abi.NewTokenAmount(0),
 			&builtin.Discard{},
 		)
@@ -473,31 +479,28 @@ func (a Actor) processDeferredCronEvents(rt Runtime) {
 			failedMinerCrons = append(failedMinerCrons, event.MinerAddr)
 		}
 	}
-	rt.StateTransaction(&st, func() {
-		claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load claims")
 
-		// Remove power and leave miner frozen
-		for _, minerAddr := range failedMinerCrons {
-			claim, found, err := getClaim(claims, minerAddr)
-			if err != nil {
-				rt.Log(rtt.ERROR, "failed to get claim for miner %s after failing OnDeferredCronEvent: %s", minerAddr, err)
-				continue
-			}
-			if !found {
-				rt.Log(rtt.WARN, "miner OnDeferredCronEvent failed for miner %s with no power", minerAddr)
-				continue
+	if len(failedMinerCrons) > 0 {
+		rt.StateTransaction(&st, func() {
+			claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
+			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load claims")
+
+			// Remove miner claim and leave miner frozen
+			for _, minerAddr := range failedMinerCrons {
+				err := st.deleteClaim(claims, minerAddr)
+				if err != nil {
+					rt.Log(rtt.ERROR, "failed to delete claim for miner %s after failing OnDeferredCronEvent: %s", minerAddr, err)
+					continue
+				}
+
+				// Starting version 7, decrement miner count to keep stats consistent.
+				if rt.NetworkVersion() >= network.Version7 {
+					st.MinerCount--
+				}
 			}
 
-			// zero out miner power
-			err = st.addToClaim(claims, minerAddr, claim.RawBytePower.Neg(), claim.QualityAdjPower.Neg())
-			if err != nil {
-				rt.Log(rtt.WARN, "failed to remove (%d, %d) power for miner %s after to failed cron", claim.RawBytePower, claim.QualityAdjPower, minerAddr)
-				continue
-			}
-		}
-
-		st.Claims, err = claims.Root()
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to flush claims")
-	})
+			st.Claims, err = claims.Root()
+			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to flush claims")
+		})
+	}
 }
