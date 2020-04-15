@@ -1,17 +1,40 @@
 package builtin
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 
 	addr "github.com/filecoin-project/go-address"
-	abi "github.com/filecoin-project/go-state-types/abi"
-	exitcode "github.com/filecoin-project/go-state-types/exitcode"
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/exitcode"
 
-	runtime "github.com/filecoin-project/specs-actors/actors/runtime"
+	builtin0 "github.com/filecoin-project/specs-actors/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
 )
 
 ///// Code shared by multiple built-in actors. /////
+
+type BigFrac struct {
+	Numerator   big.Int
+	Denominator big.Int
+}
+
+// Wraps already-serialized bytes as CBOR-marshalable.
+type CBORBytes []byte
+
+func (b CBORBytes) MarshalCBOR(w io.Writer) error {
+	_, err := w.Write(b)
+	return err
+}
+
+func (b *CBORBytes) UnmarshalCBOR(r io.Reader) error {
+	var c bytes.Buffer
+	_, err := c.ReadFrom(r)
+	*b = c.Bytes()
+	return err
+}
 
 // Aborts with an ErrIllegalArgument if predicate is not true.
 func RequireParam(rt runtime.Runtime, predicate bool, msg string, args ...interface{}) {
@@ -53,9 +76,12 @@ type MinerAddrs struct {
 	ControlAddrs []addr.Address
 }
 
-type ConfirmSectorProofsParams struct {
-	Sectors []abi.SectorNumber
-}
+// Note: we could move this alias back to the mutually-importing packages that use it, now that they
+// can instead both alias the v0 version.
+//type ConfirmSectorProofsParams struct {
+//	Sectors []abi.SectorNumber
+//}
+type ConfirmSectorProofsParams = builtin0.ConfirmSectorProofsParams
 
 // ResolveToIDAddr resolves the given address to it's ID address form.
 // If an ID address for the given address dosen't exist yet, it tries to create one by sending a zero balance to the given address.
@@ -79,6 +105,13 @@ func ResolveToIDAddr(rt runtime.Runtime, address addr.Address) (addr.Address, er
 	}
 
 	return idAddr, nil
+}
+
+// Changed since v0:
+// - Wrapping struct, added Penalty
+type ApplyRewardParams struct {
+	Reward  abi.TokenAmount
+	Penalty abi.TokenAmount
 }
 
 // Discard is a helper
