@@ -2,16 +2,18 @@ package account_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	builtin "github.com/filecoin-project/specs-actors/actors/builtin"
-	account "github.com/filecoin-project/specs-actors/actors/builtin/account"
-	mock "github.com/filecoin-project/specs-actors/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/support/testing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v2/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
 )
 
 type constructorTestCase struct {
@@ -67,6 +69,8 @@ func TestAccountactor(t *testing.T) {
 				rt.ExpectValidateCallerAny()
 				pubkeyAddress := rt.Call(actor.PubkeyAddress, nil).(*address.Address)
 				assert.Equal(t, &tc.addr, pubkeyAddress)
+
+				checkState(t, rt)
 			} else {
 				rt.ExpectAbort(tc.exitCode, func() {
 					rt.Call(actor.Constructor, &tc.addr)
@@ -75,4 +79,13 @@ func TestAccountactor(t *testing.T) {
 			rt.Verify()
 		})
 	}
+}
+
+func checkState(t *testing.T, rt *mock.Runtime) {
+	testAddress, err := address.NewIDAddress(1000)
+	require.NoError(t, err)
+	var st account.State
+	rt.GetState(&st)
+	_, msgs := account.CheckStateInvariants(&st, testAddress)
+	assert.True(t, msgs.IsEmpty(), strings.Join(msgs.Messages(), "\n"))
 }
