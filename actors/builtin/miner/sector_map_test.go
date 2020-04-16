@@ -3,17 +3,18 @@ package miner_test
 import (
 	"errors"
 	"math"
+	"sort"
 	"testing"
 
 	"github.com/filecoin-project/go-bitfield"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
 )
 
 func TestDeadlineSectorMap(t *testing.T) {
-	dm := make(miner.DeadlineSectorMap)
+	dm := miner.NewDeadlineSectorMap(9)
 	dlCount := uint64(10)
 	partCount := uint64(5)
 	for dlIdx := uint64(0); dlIdx < dlCount; dlIdx++ {
@@ -23,9 +24,9 @@ func TestDeadlineSectorMap(t *testing.T) {
 	}
 
 	err := dm.ForEach(func(dlIdx uint64, partitions miner.PartitionSectorMap) error {
-		assert.Equal(t, dm[dlIdx], partitions)
+		assert.Equal(t, dm.M[dlIdx], partitions)
 		return partitions.ForEach(func(partIdx uint64, sectorNos bitfield.BitField) error {
-			assert.Equal(t, partitions[partIdx], sectorNos)
+			assert.Equal(t, partitions.M[partIdx], sectorNos)
 			assertBitfieldEquals(t, sectorNos, dlIdx*partCount+partIdx)
 			return nil
 		})
@@ -44,13 +45,13 @@ func TestDeadlineSectorMap(t *testing.T) {
 
 	// Merge a sector in.
 	require.NoError(t, dm.Add(0, 0, bf(1000)))
-	assertBitfieldEquals(t, dm[0][0], 0, 1000)
+	assertBitfieldEquals(t, dm.M[0].M[0], 0, 1000)
 	assert.Error(t, dm.Check(partCount*dlCount, partCount*dlCount))
 	assert.NoError(t, dm.Check(partCount*dlCount, partCount*dlCount+1))
 }
 
 func TestDeadlineSectorMapError(t *testing.T) {
-	dm := make(miner.DeadlineSectorMap)
+	dm := miner.NewDeadlineSectorMap(9)
 	dlCount := uint64(10)
 	partCount := uint64(5)
 	for dlIdx := uint64(0); dlIdx < dlCount; dlIdx++ {
@@ -70,28 +71,28 @@ func TestDeadlineSectorMapError(t *testing.T) {
 }
 
 func TestDeadlineSectorMapValues(t *testing.T) {
-	dm := make(miner.DeadlineSectorMap)
+	dm := miner.NewDeadlineSectorMap(9)
 	assert.NoError(t, dm.AddValues(0, 1, 0, 1, 2, 3))
 
-	assertBitfieldEquals(t, dm[0][1], 0, 1, 2, 3)
+	assertBitfieldEquals(t, dm.M[0].M[1], 0, 1, 2, 3)
 }
 
 func TestPartitionSectorMapValues(t *testing.T) {
-	pm := make(miner.PartitionSectorMap)
+	pm := miner.NewPartitionSectorMap(9)
 	assert.NoError(t, pm.AddValues(0, 0, 1, 2, 3))
 
-	assertBitfieldEquals(t, pm[0], 0, 1, 2, 3)
+	assertBitfieldEquals(t, pm.M[0], 0, 1, 2, 3)
 }
 
 func TestDeadlineSectorMapOverflow(t *testing.T) {
-	dm := make(miner.DeadlineSectorMap)
+	dm := miner.NewDeadlineSectorMap(9)
 	dlCount := uint64(10)
 	bf := seq(t, 0, math.MaxUint64)
 	for dlIdx := uint64(0); dlIdx < dlCount; dlIdx++ {
 		assert.NoError(t, dm.Add(dlIdx, 0, bf))
 	}
 
-	_, _, err := dm[0].Count()
+	_, _, err := dm.M[0].Count()
 	require.NoError(t, err)
 
 	_, _, err = dm.Count()
@@ -99,7 +100,7 @@ func TestDeadlineSectorMapOverflow(t *testing.T) {
 }
 
 func TestPartitionSectorMapOverflow(t *testing.T) {
-	pm := make(miner.PartitionSectorMap)
+	pm := miner.NewPartitionSectorMap(9)
 	partCount := uint64(2)
 	bf := seq(t, 0, math.MaxUint64)
 	for partIdx := uint64(0); partIdx < partCount; partIdx++ {
@@ -137,4 +138,26 @@ func TestPartitionSectorMapEmpty(t *testing.T) {
 		return nil
 	}))
 	require.Empty(t, pm.Partitions())
+}
+
+func TestDeadlineSectorMapSorted(t *testing.T) {
+	dm := miner.NewDeadlineSectorMap(9)
+	for i := uint64(47); i > 0; i-- {
+		require.NoError(t, dm.AddValues(i, 0, 0))
+	}
+	dls := dm.Deadlines()
+	require.True(t, sort.SliceIsSorted(dls, func(i, j int) bool {
+		return dls[i] < dls[j]
+	}))
+}
+
+func TestPartitionSectorMapSorted(t *testing.T) {
+	pm := miner.NewPartitionSectorMap(9)
+	for i := uint64(100); i > 0; i-- {
+		require.NoError(t, pm.AddValues(i, 0))
+	}
+	pms := pm.Partitions()
+	require.True(t, sort.SliceIsSorted(pms, func(i, j int) bool {
+		return pms[i] < pms[j]
+	}))
 }
