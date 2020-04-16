@@ -3,11 +3,13 @@ package builtin
 import (
 	"fmt"
 
-	big "github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/big"
 )
 
+// PARAM_SPEC
 // The duration of a chain epoch.
-// This is used for deriving epoch-denominated periods that are more naturally expressed in clock time.
+// Motivation: It guarantees that a block is propagated and WinningPoSt can be successfully done in time all supported miners.
+// Usage: It is used for deriving epoch-denominated periods that are more naturally expressed in clock time.
 // TODO: In lieu of a real configuration mechanism for this value, we'd like to make it a var so that implementations
 // can override it at runtime. Doing so requires changing all the static references to it in this repo to go through
 // late-binding function calls, or they'll see the "wrong" value.
@@ -18,9 +20,13 @@ const EpochDurationSeconds = 30
 const SecondsInHour = 60 * 60
 const SecondsInDay = 24 * SecondsInHour
 const EpochsInHour = SecondsInHour / EpochDurationSeconds
-const EpochsInDay = SecondsInDay / EpochDurationSeconds
+const EpochsInDay = 24 * EpochsInHour
+const EpochsInYear = 365 * EpochsInDay
 
-// The expected number of block producers in each epoch.
+// PARAM_SPEC
+// Expected number of block quality in an epoch (e.g. 1 block with block quality 5, or 5 blocks with quality 1)
+// Motivation: It ensures that there is enough on-chain throughput
+// Usage: It is used to calculate the block reward.
 var ExpectedLeadersPerEpoch = int64(5)
 
 func init() {
