@@ -2,9 +2,9 @@ package market
 
 import (
 	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/ipfs/go-cid"
+	. "github.com/filecoin-project/specs-actors/v2/actors/util/adt"
 
-	. "github.com/filecoin-project/specs-actors/actors/util/adt"
+	"github.com/ipfs/go-cid"
 )
 
 // A specialization of a array to deals.
@@ -46,6 +46,12 @@ func (t *DealArray) Delete(key uint64) error {
 // It is an error to query for a key that doesn't exist.
 type DealMetaArray struct {
 	*Array
+}
+
+type DealState struct {
+	SectorStartEpoch abi.ChainEpoch // -1 if not yet included in proven sector
+	LastUpdatedEpoch abi.ChainEpoch // -1 if deal state never updated
+	SlashEpoch       abi.ChainEpoch // -1 if deal never slashed
 }
 
 // Interprets a store as balance table with root `r`.
