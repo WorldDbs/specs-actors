@@ -2,21 +2,21 @@ package init_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	addr "github.com/filecoin-project/go-address"
-	abi "github.com/filecoin-project/go-state-types/abi"
-	big "github.com/filecoin-project/go-state-types/big"
-	exitcode "github.com/filecoin-project/go-state-types/exitcode"
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/exitcode"
 	cid "github.com/ipfs/go-cid"
 	assert "github.com/stretchr/testify/assert"
 
-	builtin "github.com/filecoin-project/specs-actors/actors/builtin"
-	init_ "github.com/filecoin-project/specs-actors/actors/builtin/init"
-	runtime "github.com/filecoin-project/specs-actors/actors/runtime"
-	adt "github.com/filecoin-project/specs-actors/actors/util/adt"
-	mock "github.com/filecoin-project/specs-actors/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/support/testing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	init_ "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -30,6 +30,7 @@ func TestConstructor(t *testing.T) {
 	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 	rt := builder.Build(t)
 	actor.constructAndVerify(rt)
+	actor.checkState(rt)
 }
 
 func TestExec(t *testing.T) {
@@ -53,9 +54,10 @@ func TestExec(t *testing.T) {
 		rt.ExpectAbort(exitcode.ErrForbidden, func() {
 			actor.execAndVerify(rt, cid.Undef, []byte{})
 		})
+		actor.checkState(rt)
 	})
 
-	var fakeParams = runtime.CBORBytes([]byte{'D', 'E', 'A', 'D', 'B', 'E', 'E', 'F'})
+	var fakeParams = builtin.CBORBytes([]byte{'D', 'E', 'A', 'D', 'B', 'E', 'E', 'F'})
 	var balance = abi.NewTokenAmount(100)
 
 	t.Run("happy path exec create 2 payment channels", func(t *testing.T) {
@@ -111,6 +113,7 @@ func TestExec(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, found)
 		assert.Equal(t, expectedIdAddr2, actualIdAddr2)
+		actor.checkState(rt)
 	})
 
 	t.Run("happy path exec create storage miner", func(t *testing.T) {
@@ -148,6 +151,7 @@ func TestExec(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, found)
 		assert.Equal(t, addr.Undef, actualUnknownAddr)
+		actor.checkState(rt)
 	})
 
 	t.Run("happy path create multisig actor", func(t *testing.T) {
@@ -171,6 +175,7 @@ func TestExec(t *testing.T) {
 		execRet := actor.execAndVerify(rt, builtin.MultisigActorCodeID, fakeParams)
 		assert.Equal(t, uniqueAddr, execRet.RobustAddress)
 		assert.Equal(t, expectedIdAddr, execRet.IDAddress)
+		actor.checkState(rt)
 	})
 
 	t.Run("sending to constructor failure", func(t *testing.T) {
@@ -204,14 +209,25 @@ func TestExec(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, found)
 		assert.Equal(t, addr.Undef, noResoAddr)
-
+		actor.checkState(rt)
 	})
-
 }
 
 type initHarness struct {
 	init_.Actor
 	t testing.TB
+}
+
+func (h *initHarness) state(rt *mock.Runtime) *init_.State {
+	var st init_.State
+	rt.GetState(&st)
+	return &st
+}
+
+func (h *initHarness) checkState(rt *mock.Runtime) {
+	st := h.state(rt)
+	_, msgs := init_.CheckStateInvariants(st, rt.AdtStore())
+	assert.True(h.t, msgs.IsEmpty(), strings.Join(msgs.Messages(), "\n"))
 }
 
 func (h *initHarness) constructAndVerify(rt *mock.Runtime) {
