@@ -21,7 +21,7 @@ func NewBuilder(ctx context.Context, receiver addr.Address) *RuntimeBuilder {
 	m := &Runtime{
 		ctx:               ctx,
 		epoch:             0,
-		networkVersion:    network.Version0,
+		networkVersion:    network.VersionMax,
 		receiver:          receiver,
 		caller:            addr.Address{},
 		callerType:        cid.Undef,
@@ -70,11 +70,6 @@ func (b *RuntimeBuilder) WithEpoch(epoch abi.ChainEpoch) *RuntimeBuilder {
 	return b
 }
 
-func (b *RuntimeBuilder) WithNetworkVersion(nv network.Version) *RuntimeBuilder {
-	b.rt.networkVersion = nv
-	return b
-}
-
 func (b *RuntimeBuilder) WithCaller(address addr.Address, code cid.Cid) *RuntimeBuilder {
 	b.rt.caller = address
 	b.rt.callerType = code
@@ -89,6 +84,11 @@ func (b *RuntimeBuilder) WithMiner(miner addr.Address) *RuntimeBuilder {
 func (b *RuntimeBuilder) WithBalance(balance, received abi.TokenAmount) *RuntimeBuilder {
 	b.rt.balance = balance
 	b.rt.valueReceived = received
+	return b
+}
+
+func (b *RuntimeBuilder) WithNetworkVersion(version network.Version) *RuntimeBuilder {
+	b.rt.networkVersion = version
 	return b
 }
 
