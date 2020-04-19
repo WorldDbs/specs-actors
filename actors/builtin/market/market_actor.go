@@ -12,17 +12,18 @@ import (
 	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	rtt "github.com/filecoin-project/go-state-types/rt"
+	market0 "github.com/filecoin-project/specs-actors/actors/builtin/market"
 	"github.com/ipfs/go-cid"
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/actors/runtime"
-	. "github.com/filecoin-project/specs-actors/actors/util"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	. "github.com/filecoin-project/specs-actors/v2/actors/util"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
 )
 
 type Actor struct{}
@@ -78,10 +79,11 @@ func (a Actor) Constructor(rt Runtime, _ *abi.EmptyValue) *abi.EmptyValue {
 	return nil
 }
 
-type WithdrawBalanceParams struct {
-	ProviderOrClientAddress addr.Address
-	Amount                  abi.TokenAmount
-}
+//type WithdrawBalanceParams struct {
+//	ProviderOrClientAddress addr.Address
+//	Amount                  abi.TokenAmount
+//}
+type WithdrawBalanceParams = market0.WithdrawBalanceParams
 
 // Attempt to withdraw the specified amount from the balance held in escrow.
 // If less than the specified amount is available, yields the entire available balance.
@@ -89,8 +91,6 @@ func (a Actor) WithdrawBalance(rt Runtime, params *WithdrawBalanceParams) *abi.E
 	if params.Amount.LessThan(big.Zero()) {
 		rt.Abortf(exitcode.ErrIllegalArgument, "negative amount %v", params.Amount)
 	}
-	// withdrawal can ONLY be done by a signing party.
-	rt.ValidateImmediateCallerType(builtin.CallerTypesSignable...)
 
 	nominal, recipient, approvedCallers := escrowAddress(rt, params.ProviderOrClientAddress)
 	// for providers -> only corresponding owner or worker can withdraw
@@ -149,13 +149,15 @@ func (a Actor) AddBalance(rt Runtime, providerOrClientAddress *addr.Address) *ab
 	return nil
 }
 
-type PublishStorageDealsParams struct {
-	Deals []ClientDealProposal
-}
+//type PublishStorageDealsParams struct {
+//	Deals []ClientDealProposal
+//}
+type PublishStorageDealsParams = market0.PublishStorageDealsParams
 
-type PublishStorageDealsReturn struct {
-	IDs []abi.DealID
-}
+//type PublishStorageDealsReturn struct {
+//	IDs []abi.DealID
+//}
+type PublishStorageDealsReturn = market0.PublishStorageDealsReturn
 
 // Publish a new set of storage deals (not yet included in a sector).
 func (a Actor) PublishStorageDeals(rt Runtime, params *PublishStorageDealsParams) *PublishStorageDealsReturn {
@@ -199,7 +201,7 @@ func (a Actor) PublishStorageDeals(rt Runtime, params *PublishStorageDealsParams
 
 		// All storage dealProposals will be added in an atomic transaction; this operation will be unrolled if any of them fails.
 		for di, deal := range params.Deals {
-			validateDeal(rt, deal, baselinePower, networkRawPower, networkQAPower)
+			validateDeal(rt, deal, networkRawPower, networkQAPower, baselinePower)
 
 			if deal.Proposal.Provider != provider && deal.Proposal.Provider != providerRaw {
 				rt.Abortf(exitcode.ErrIllegalArgument, "cannot publish deals from different providers at the same time")
@@ -271,18 +273,22 @@ func (a Actor) PublishStorageDeals(rt Runtime, params *PublishStorageDealsParams
 		}
 	}
 
-	return &PublishStorageDealsReturn{newDealIds}
+	return &PublishStorageDealsReturn{IDs: newDealIds}
 }
 
-type VerifyDealsForActivationParams struct {
-	DealIDs      []abi.DealID
-	SectorExpiry abi.ChainEpoch
-	SectorStart  abi.ChainEpoch
-}
+//type VerifyDealsForActivationParams struct {
+//	DealIDs      []abi.DealID
+//	SectorExpiry abi.ChainEpoch
+//	SectorStart  abi.ChainEpoch
+//}
+type VerifyDealsForActivationParams = market0.VerifyDealsForActivationParams
 
+// Changed since v0:
+// - Added DealSpace
 type VerifyDealsForActivationReturn struct {
 	DealWeight         abi.DealWeight
 	VerifiedDealWeight abi.DealWeight
+	DealSpace          uint64
 }
 
 // Verify that a given set of storage deals is valid for a sector currently being PreCommitted
@@ -296,19 +302,21 @@ func (A Actor) VerifyDealsForActivation(rt Runtime, params *VerifyDealsForActiva
 	rt.StateReadonly(&st)
 	store := adt.AsStore(rt)
 
-	dealWeight, verifiedWeight, err := ValidateDealsForActivation(&st, store, params.DealIDs, minerAddr, params.SectorExpiry, params.SectorStart)
+	dealWeight, verifiedWeight, dealSpace, err := ValidateDealsForActivation(&st, store, params.DealIDs, minerAddr, params.SectorExpiry, params.SectorStart)
 	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to validate dealProposals for activation")
 
 	return &VerifyDealsForActivationReturn{
 		DealWeight:         dealWeight,
 		VerifiedDealWeight: verifiedWeight,
+		DealSpace:          dealSpace,
 	}
 }
 
-type ActivateDealsParams struct {
-	DealIDs      []abi.DealID
-	SectorExpiry abi.ChainEpoch
-}
+//type ActivateDealsParams struct {
+//	DealIDs      []abi.DealID
+//	SectorExpiry abi.ChainEpoch
+//}
+type ActivateDealsParams = market0.ActivateDealsParams
 
 // Verify that a given set of storage deals is valid for a sector currently being ProveCommitted,
 // update the market's internal state accordingly.
@@ -322,7 +330,7 @@ func (a Actor) ActivateDeals(rt Runtime, params *ActivateDealsParams) *abi.Empty
 
 	// Update deal dealStates.
 	rt.StateTransaction(&st, func() {
-		_, _, err := ValidateDealsForActivation(&st, store, params.DealIDs, minerAddr, params.SectorExpiry, currEpoch)
+		_, _, _, err := ValidateDealsForActivation(&st, store, params.DealIDs, minerAddr, params.SectorExpiry, currEpoch)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to validate dealProposals for activation")
 
 		msm, err := st.mutator(adt.AsStore(rt)).withDealStates(WritePermission).
@@ -366,10 +374,11 @@ func (a Actor) ActivateDeals(rt Runtime, params *ActivateDealsParams) *abi.Empty
 	return nil
 }
 
-type ComputeDataCommitmentParams struct {
-	DealIDs    []abi.DealID
-	SectorType abi.RegisteredSealProof
-}
+//type ComputeDataCommitmentParams struct {
+//	DealIDs    []abi.DealID
+//	SectorType abi.RegisteredSealProof
+//}
+type ComputeDataCommitmentParams = market0.ComputeDataCommitmentParams
 
 func (a Actor) ComputeDataCommitment(rt Runtime, params *ComputeDataCommitmentParams) *cbg.CborCid {
 	rt.ValidateImmediateCallerType(builtin.StorageMinerActorCodeID)
@@ -398,10 +407,11 @@ func (a Actor) ComputeDataCommitment(rt Runtime, params *ComputeDataCommitmentPa
 	return (*cbg.CborCid)(&commd)
 }
 
-type OnMinerSectorsTerminateParams struct {
-	Epoch   abi.ChainEpoch
-	DealIDs []abi.DealID
-}
+//type OnMinerSectorsTerminateParams struct {
+//	Epoch   abi.ChainEpoch
+//	DealIDs []abi.DealID
+//}
+type OnMinerSectorsTerminateParams = market0.OnMinerSectorsTerminateParams
 
 // Terminate a set of deals in response to their containing sector being terminated.
 // Slash provider collateral, refund client collateral, and refund partial unpaid escrow
@@ -626,29 +636,40 @@ func deleteDealProposalAndState(dealId abi.DealID, states *DealMetaArray, propos
 
 // Validates a collection of deal dealProposals for activation, and returns their combined weight,
 // split into regular deal weight and verified deal weight.
-func ValidateDealsForActivation(st *State, store adt.Store, dealIDs []abi.DealID, minerAddr addr.Address,
-	sectorExpiry, currEpoch abi.ChainEpoch) (big.Int, big.Int, error) {
+func ValidateDealsForActivation(
+	st *State, store adt.Store, dealIDs []abi.DealID, minerAddr addr.Address, sectorExpiry, currEpoch abi.ChainEpoch,
+) (big.Int, big.Int, uint64, error) {
 
 	proposals, err := AsDealProposalArray(store, st.Proposals)
 	if err != nil {
-		return big.Int{}, big.Int{}, xerrors.Errorf("failed to load dealProposals: %w", err)
+		return big.Int{}, big.Int{}, 0, xerrors.Errorf("failed to load dealProposals: %w", err)
 	}
 
+	seenDealIDs := make(map[abi.DealID]struct{}, len(dealIDs))
+
+	totalDealSpace := uint64(0)
 	totalDealSpaceTime := big.Zero()
 	totalVerifiedSpaceTime := big.Zero()
 	for _, dealID := range dealIDs {
+		// Make sure we don't double-count deals.
+		if _, seen := seenDealIDs[dealID]; seen {
+			return big.Int{}, big.Int{}, 0, exitcode.ErrIllegalArgument.Wrapf("deal ID %d present multiple times", dealID)
+		}
+		seenDealIDs[dealID] = struct{}{}
+
 		proposal, found, err := proposals.Get(dealID)
 		if err != nil {
-			return big.Int{}, big.Int{}, xerrors.Errorf("failed to load deal %d: %w", dealID, err)
+			return big.Int{}, big.Int{}, 0, xerrors.Errorf("failed to load deal %d: %w", dealID, err)
 		}
 		if !found {
-			return big.Int{}, big.Int{}, exitcode.ErrNotFound.Wrapf("no such deal %d", dealID)
+			return big.Int{}, big.Int{}, 0, exitcode.ErrNotFound.Wrapf("no such deal %d", dealID)
 		}
 		if err = validateDealCanActivate(proposal, minerAddr, sectorExpiry, currEpoch); err != nil {
-			return big.Int{}, big.Int{}, xerrors.Errorf("cannot activate deal %d: %w", dealID, err)
+			return big.Int{}, big.Int{}, 0, xerrors.Errorf("cannot activate deal %d: %w", dealID, err)
 		}
 
 		// Compute deal weight
+		totalDealSpace += uint64(proposal.PieceSize)
 		dealSpaceTime := DealWeight(proposal)
 		if proposal.VerifiedDeal {
 			totalVerifiedSpaceTime = big.Add(totalVerifiedSpaceTime, dealSpaceTime)
@@ -656,7 +677,7 @@ func ValidateDealsForActivation(st *State, store adt.Store, dealIDs []abi.DealID
 			totalDealSpaceTime = big.Add(totalDealSpaceTime, dealSpaceTime)
 		}
 	}
-	return totalDealSpaceTime, totalVerifiedSpaceTime, nil
+	return totalDealSpaceTime, totalVerifiedSpaceTime, totalDealSpace, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -676,12 +697,16 @@ func validateDealCanActivate(proposal *DealProposal, minerAddr addr.Address, sec
 	return nil
 }
 
-func validateDeal(rt Runtime, deal ClientDealProposal, baselinePower, networkRawPower, networkQAPower abi.StoragePower) {
+func validateDeal(rt Runtime, deal ClientDealProposal, networkRawPower, networkQAPower, baselinePower abi.StoragePower) {
 	if err := dealProposalIsInternallyValid(rt, deal); err != nil {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Invalid deal proposal: %s", err)
 	}
 
 	proposal := deal.Proposal
+
+	if len(proposal.Label) > DealMaxLabelSize {
+		rt.Abortf(exitcode.ErrIllegalArgument, "deal label can be at most %d bytes, is %d", DealMaxLabelSize, len(proposal.Label))
+	}
 
 	if err := proposal.PieceSize.Validate(); err != nil {
 		rt.Abortf(exitcode.ErrIllegalArgument, "proposal piece size is invalid: %v", err)
@@ -703,17 +728,18 @@ func validateDeal(rt Runtime, deal ClientDealProposal, baselinePower, networkRaw
 		rt.Abortf(exitcode.ErrIllegalArgument, "Deal start epoch has already elapsed.")
 	}
 
-	minDuration, maxDuration := dealDurationBounds(proposal.PieceSize)
+	minDuration, maxDuration := DealDurationBounds(proposal.PieceSize)
 	if proposal.Duration() < minDuration || proposal.Duration() > maxDuration {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Deal duration out of bounds.")
 	}
 
-	minPrice, maxPrice := dealPricePerEpochBounds(proposal.PieceSize, proposal.Duration())
+	minPrice, maxPrice := DealPricePerEpochBounds(proposal.PieceSize, proposal.Duration())
 	if proposal.StoragePricePerEpoch.LessThan(minPrice) || proposal.StoragePricePerEpoch.GreaterThan(maxPrice) {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Storage price out of bounds.")
 	}
 
-	minProviderCollateral, maxProviderCollateral := DealProviderCollateralBounds(proposal.PieceSize, proposal.VerifiedDeal, networkRawPower, networkQAPower, baselinePower, rt.TotalFilCircSupply(), rt.NetworkVersion())
+	minProviderCollateral, maxProviderCollateral := DealProviderCollateralBounds(proposal.PieceSize, proposal.VerifiedDeal,
+		networkRawPower, networkQAPower, baselinePower, rt.TotalFilCircSupply())
 	if proposal.ProviderCollateral.LessThan(minProviderCollateral) || proposal.ProviderCollateral.GreaterThan(maxProviderCollateral) {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Provider collateral out of bounds.")
 	}
