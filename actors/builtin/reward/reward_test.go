@@ -9,11 +9,12 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/support/testing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v2/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -35,9 +36,9 @@ func TestConstructor(t *testing.T) {
 		assert.Equal(t, abi.ChainEpoch(0), st.Epoch)
 		assert.Equal(t, abi.NewStoragePower(0), st.CumsumRealized)
 		assert.Equal(t, big.MustFromString(EpochZeroReward), st.ThisEpochReward)
-		epochZeroBaseline := big.Sub(reward.BaselineInitialValueV0, big.NewInt(1)) // account for rounding error of one byte during construction
+		epochZeroBaseline := big.Sub(reward.BaselineInitialValue, big.NewInt(1)) // account for rounding error of one byte during construction
 		assert.Equal(t, epochZeroBaseline, st.ThisEpochBaselinePower)
-		assert.Equal(t, reward.BaselineInitialValueV0, st.EffectiveBaselinePower)
+		assert.Equal(t, reward.BaselineInitialValue, st.EffectiveBaselinePower)
 	})
 	t.Run("construct with less power than baseline", func(t *testing.T) {
 		rt := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
@@ -55,7 +56,7 @@ func TestConstructor(t *testing.T) {
 		rt := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
 			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID).
 			Build(t)
-		startRealizedPower := big.Lsh(abi.NewStoragePower(1), 60)
+		startRealizedPower := reward.BaselineInitialValue
 		actor.constructAndVerify(rt, &startRealizedPower)
 		st := getState(rt)
 		rwrd := st.ThisEpochReward
@@ -64,7 +65,7 @@ func TestConstructor(t *testing.T) {
 		rt = mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
 			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID).
 			Build(t)
-		startRealizedPower = big.Lsh(abi.NewStoragePower(2), 60)
+		startRealizedPower = big.Mul(reward.BaselineInitialValue, big.NewInt(2))
 		actor.constructAndVerify(rt, &startRealizedPower)
 		newSt := getState(rt)
 		// Reward value is the same; realized power impact on reward is capped at baseline
@@ -123,7 +124,7 @@ func TestAwardBlockReward(t *testing.T) {
 		rt.Reset()
 	})
 
-	t.Run("pays reward and burns penalty", func(t *testing.T) {
+	t.Run("pays reward and tracks penalty", func(t *testing.T) {
 		rt := builder.Build(t)
 		startRealizedPower := abi.NewStoragePower(0)
 		actor.constructAndVerify(rt, &startRealizedPower)
@@ -132,7 +133,7 @@ func TestAwardBlockReward(t *testing.T) {
 		rt.ExpectValidateCallerAddr(builtin.SystemActorAddr)
 		penalty := big.NewInt(100)
 		gasReward := big.NewInt(200)
-		expectedReward := big.Sum(big.Div(big.MustFromString(EpochZeroReward), big.NewInt(5)), gasReward, penalty.Neg())
+		expectedReward := big.Sum(big.Div(big.MustFromString(EpochZeroReward), big.NewInt(5)), gasReward)
 		actor.awardBlockReward(rt, winner, penalty, gasReward, 1, expectedReward)
 		rt.Reset()
 	})
@@ -148,9 +149,9 @@ func TestAwardBlockReward(t *testing.T) {
 		rt.SetBalance(smallReward)
 		rt.ExpectValidateCallerAddr(builtin.SystemActorAddr)
 
-		expectedReward := big.Sub(smallReward, penalty)
-		rt.ExpectSend(winner, builtin.MethodsMiner.AddLockedFund, &expectedReward, expectedReward, nil, 0)
-		rt.ExpectSend(builtin.BurntFundsActorAddr, builtin.MethodSend, nil, penalty, nil, 0)
+		minerPenalty := big.Mul(big.NewInt(reward.PenaltyMultiplier), penalty)
+		expectedParams := builtin.ApplyRewardParams{Reward: smallReward, Penalty: minerPenalty}
+		rt.ExpectSend(winner, builtin.MethodsMiner.ApplyRewards, &expectedParams, smallReward, nil, 0)
 		rt.Call(actor.AwardBlockReward, &reward.AwardBlockRewardParams{
 			Miner:     winner,
 			Penalty:   penalty,
@@ -160,14 +161,14 @@ func TestAwardBlockReward(t *testing.T) {
 		rt.Verify()
 	})
 
-	t.Run("TotalMined tracks correctly", func(t *testing.T) {
+	t.Run("TotalStoragePowerReward tracks correctly", func(t *testing.T) {
 		rt := builder.Build(t)
 		startRealizedPower := abi.NewStoragePower(1)
 		actor.constructAndVerify(rt, &startRealizedPower)
 		miner := tutil.NewIDAddr(t, 1000)
 
 		st := getState(rt)
-		assert.Equal(t, big.Zero(), st.TotalMined)
+		assert.Equal(t, big.Zero(), st.TotalStoragePowerReward)
 		st.ThisEpochReward = abi.NewTokenAmount(5000)
 		rt.ReplaceState(st)
 		// enough balance to pay 3 full rewards and one partial
@@ -181,7 +182,7 @@ func TestAwardBlockReward(t *testing.T) {
 		actor.awardBlockReward(rt, miner, big.Zero(), big.Zero(), 1, big.NewInt(500)) // partial payout when balance below reward
 
 		newState := getState(rt)
-		assert.Equal(t, totalPayout, newState.TotalMined)
+		assert.Equal(t, totalPayout, newState.TotalStoragePowerReward)
 
 	})
 
@@ -191,7 +192,7 @@ func TestAwardBlockReward(t *testing.T) {
 		actor.constructAndVerify(rt, &startRealizedPower)
 		miner := tutil.NewIDAddr(t, 1000)
 		st := getState(rt)
-		assert.Equal(t, big.Zero(), st.TotalMined)
+		assert.Equal(t, big.Zero(), st.TotalStoragePowerReward)
 		st.ThisEpochReward = abi.NewTokenAmount(5000)
 		rt.ReplaceState(st)
 		// enough balance to pay 3 full rewards and one partial
@@ -200,7 +201,9 @@ func TestAwardBlockReward(t *testing.T) {
 
 		rt.ExpectValidateCallerAddr(builtin.SystemActorAddr)
 		expectedReward := big.NewInt(1000)
-		rt.ExpectSend(miner, builtin.MethodsMiner.AddLockedFund, &expectedReward, expectedReward, nil, exitcode.ErrForbidden)
+		penalty := big.Zero()
+		expectedParams := builtin.ApplyRewardParams{Reward: expectedReward, Penalty: penalty}
+		rt.ExpectSend(miner, builtin.MethodsMiner.ApplyRewards, &expectedParams, expectedReward, nil, exitcode.ErrForbidden)
 		rt.ExpectSend(builtin.BurntFundsActorAddr, builtin.MethodSend, nil, expectedReward, nil, exitcode.Ok)
 
 		rt.Call(actor.AwardBlockReward, &reward.AwardBlockRewardParams{
@@ -211,6 +214,23 @@ func TestAwardBlockReward(t *testing.T) {
 		})
 
 		rt.Verify()
+	})
+}
+
+func TestThisEpochReward(t *testing.T) {
+	t.Run("successfully fetch reward for this epoch", func(t *testing.T) {
+		actor := rewardHarness{reward.Actor{}, t}
+		builder := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+		rt := builder.Build(t)
+		power := abi.NewStoragePower(1 << 50)
+		actor.constructAndVerify(rt, &power)
+
+		resp := actor.thisEpochReward(rt)
+		st := getState(rt)
+
+		require.EqualValues(t, st.ThisEpochBaselinePower, resp.ThisEpochBaselinePower)
+		require.EqualValues(t, st.ThisEpochRewardSmoothed, resp.ThisEpochRewardSmoothed)
 	})
 }
 
@@ -256,10 +276,11 @@ func (h *rewardHarness) updateNetworkKPI(rt *mock.Runtime, currRawPower *abi.Sto
 
 func (h *rewardHarness) awardBlockReward(rt *mock.Runtime, miner address.Address, penalty, gasReward abi.TokenAmount, winCount int64, expectedPayment abi.TokenAmount) {
 	rt.ExpectValidateCallerAddr(builtin.SystemActorAddr)
-	rt.ExpectSend(miner, builtin.MethodsMiner.AddLockedFund, &expectedPayment, expectedPayment, nil, 0)
-	if penalty.GreaterThan(big.Zero()) {
-		rt.ExpectSend(builtin.BurntFundsActorAddr, builtin.MethodSend, nil, penalty, nil, 0)
-	}
+	// expect penalty multiplier
+	minerPenalty := big.Mul(big.NewInt(reward.PenaltyMultiplier), penalty)
+	expectedParams := builtin.ApplyRewardParams{Reward: expectedPayment, Penalty: minerPenalty}
+	rt.ExpectSend(miner, builtin.MethodsMiner.ApplyRewards, &expectedParams, expectedPayment, nil, 0)
+
 	rt.Call(h.AwardBlockReward, &reward.AwardBlockRewardParams{
 		Miner:     miner,
 		Penalty:   penalty,
@@ -267,6 +288,17 @@ func (h *rewardHarness) awardBlockReward(rt *mock.Runtime, miner address.Address
 		WinCount:  winCount,
 	})
 	rt.Verify()
+}
+
+func (h *rewardHarness) thisEpochReward(rt *mock.Runtime) *reward.ThisEpochRewardReturn {
+	rt.ExpectValidateCallerAny()
+
+	ret := rt.Call(h.ThisEpochReward, nil)
+	rt.Verify()
+
+	resp, ok := ret.(*reward.ThisEpochRewardReturn)
+	require.True(h.t, ok)
+	return resp
 }
 
 func getState(rt *mock.Runtime) *reward.State {
