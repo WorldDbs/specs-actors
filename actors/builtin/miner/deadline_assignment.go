@@ -2,6 +2,8 @@ package miner
 
 import (
 	"container/heap"
+
+	"golang.org/x/xerrors"
 )
 
 // Helper types for deadline assignment.
@@ -33,7 +35,12 @@ func (dai *deadlineAssignmentInfo) isFullNow(partitionSize uint64) bool {
 	return (dai.totalSectors % partitionSize) == 0
 }
 
+func (dai *deadlineAssignmentInfo) maxPartitionsReached(partitionSize, maxPartitions uint64) bool {
+	return dai.totalSectors >= partitionSize*maxPartitions
+}
+
 type deadlineAssignmentHeap struct {
+	maxPartitions uint64
 	partitionSize uint64
 	deadlines     []*deadlineAssignmentInfo
 }
@@ -49,6 +56,15 @@ func (dah *deadlineAssignmentHeap) Swap(i, j int) {
 func (dah *deadlineAssignmentHeap) Less(i, j int) bool {
 	a, b := dah.deadlines[i], dah.deadlines[j]
 
+	// If one of the deadlines has already reached it's limit for the maximum number of partitions and
+	// the other hasn't, we directly pick the deadline that hasn't reached it's limit.
+	aMaxPartitionsreached := a.maxPartitionsReached(dah.partitionSize, dah.maxPartitions)
+	bMaxPartitionsReached := b.maxPartitionsReached(dah.partitionSize, dah.maxPartitions)
+	if aMaxPartitionsreached != bMaxPartitionsReached {
+		return !aMaxPartitionsreached
+	}
+
+	// Otherwise:-
 	// When assigning partitions to deadlines, we're trying to optimize the
 	// following:
 	//
@@ -159,12 +175,14 @@ func (dah *deadlineAssignmentHeap) Pop() interface{} {
 // Assigns partitions to deadlines, first filling partial partitions, then
 // adding new partitions to deadlines with the fewest live sectors.
 func assignDeadlines(
+	maxPartitions uint64,
 	partitionSize uint64,
 	deadlines *[WPoStPeriodDeadlines]*Deadline,
 	sectors []*SectorOnChainInfo,
-) (changes [WPoStPeriodDeadlines][]*SectorOnChainInfo) {
+) (changes [WPoStPeriodDeadlines][]*SectorOnChainInfo, err error) {
 	// Build a heap
 	dlHeap := deadlineAssignmentHeap{
+		maxPartitions: maxPartitions,
 		partitionSize: partitionSize,
 		deadlines:     make([]*deadlineAssignmentInfo, 0, len(deadlines)),
 	}
@@ -185,6 +203,10 @@ func assignDeadlines(
 	for _, sector := range sectors {
 		info := dlHeap.deadlines[0]
 
+		if info.maxPartitionsReached(partitionSize, maxPartitions) {
+			return changes, xerrors.Errorf("maxPartitions limit %d reached for all deadlines", maxPartitions)
+		}
+
 		changes[info.index] = append(changes[info.index], sector)
 		info.liveSectors++
 		info.totalSectors++
@@ -192,5 +214,6 @@ func assignDeadlines(
 		// Update heap.
 		heap.Fix(&dlHeap, 0)
 	}
-	return changes
+
+	return changes, nil
 }
