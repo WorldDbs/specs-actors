@@ -12,9 +12,10 @@ import (
 	errors "github.com/pkg/errors"
 	"golang.org/x/xerrors"
 
-	. "github.com/filecoin-project/specs-actors/actors/util"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	. "github.com/filecoin-project/specs-actors/v2/actors/util"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
 )
 
 // genesis power in bytes = 750,000 GiB
@@ -37,29 +38,29 @@ type State struct {
 	ThisEpochRawBytePower     abi.StoragePower
 	ThisEpochQualityAdjPower  abi.StoragePower
 	ThisEpochPledgeCollateral abi.TokenAmount
-	ThisEpochQAPowerSmoothed  *smoothing.FilterEstimate
+	ThisEpochQAPowerSmoothed  smoothing.FilterEstimate
 
 	MinerCount int64
 	// Number of miners having proven the minimum consensus power.
 	MinerAboveMinPowerCount int64
 
 	// A queue of events to be triggered by cron, indexed by epoch.
-	CronEventQueue cid.Cid // Multimap, (HAMT[ChainEpoch]AMT[CronEvent]
+	CronEventQueue cid.Cid // Multimap, (HAMT[ChainEpoch]AMT[CronEvent])
 
 	// First epoch in which a cron task may be stored.
 	// Cron will iterate every epoch between this and the current epoch inclusively to find tasks to execute.
 	FirstCronEpoch abi.ChainEpoch
 
-	// Last epoch power cron tick has been processed.
-	LastProcessedCronEpoch abi.ChainEpoch
-
 	// Claimed power for each miner.
 	Claims cid.Cid // Map, HAMT[address]Claim
 
-	ProofValidationBatch *cid.Cid
+	ProofValidationBatch *cid.Cid // Multimap, (HAMT[Address]AMT[SealVerifyInfo])
 }
 
 type Claim struct {
+	// Miner's proof type used to determine minimum miner size
+	SealProofType abi.RegisteredSealProof
+
 	// Sum of raw byte power for a miner's sectors.
 	RawBytePower abi.StoragePower
 
@@ -84,7 +85,6 @@ func ConstructState(emptyMapCid, emptyMMapCid cid.Cid) *State {
 		ThisEpochPledgeCollateral: abi.NewTokenAmount(0),
 		ThisEpochQAPowerSmoothed:  smoothing.NewEstimate(InitialQAPowerEstimatePosition, InitialQAPowerEstimateVelocity),
 		FirstCronEpoch:            0,
-		LastProcessedCronEpoch:    abi.ChainEpoch(-1),
 		CronEventQueue:            emptyMMapCid,
 		Claims:                    emptyMapCid,
 		MinerCount:                0,
@@ -110,10 +110,14 @@ func (st *State) MinerNominalPowerMeetsConsensusMinimum(s adt.Store, miner addr.
 		return false, errors.Errorf("no claim for actor %v", miner)
 	}
 
-	minerNominalPower := claim.QualityAdjPower
+	minerNominalPower := claim.RawBytePower
+	minerMinPower, err := builtin.ConsensusMinerMinPower(claim.SealProofType)
+	if err != nil {
+		return false, errors.Wrap(err, "could not get miner min power from proof type")
+	}
 
 	// if miner is larger than min power requirement, we're set
-	if minerNominalPower.GreaterThanEqual(ConsensusMinerMinPower) {
+	if minerNominalPower.GreaterThanEqual(minerMinPower) {
 		return true, nil
 	}
 
@@ -123,7 +127,7 @@ func (st *State) MinerNominalPowerMeetsConsensusMinimum(s adt.Store, miner addr.
 	}
 
 	// If fewer than ConsensusMinerMinMiners over threshold miner can win a block with non-zero power
-	return minerNominalPower.GreaterThanEqual(abi.NewStoragePower(0)), nil
+	return minerNominalPower.GreaterThan(abi.NewStoragePower(0)), nil
 }
 
 // Parameters may be negative to subtract.
@@ -145,6 +149,14 @@ func (st *State) AddToClaim(s adt.Store, miner addr.Address, power abi.StoragePo
 	return nil
 }
 
+func (st *State) GetClaim(s adt.Store, a addr.Address) (*Claim, bool, error) {
+	claims, err := adt.AsMap(s, st.Claims)
+	if err != nil {
+		return nil, false, xerrors.Errorf("failed to load claims: %w", err)
+	}
+	return getClaim(claims, a)
+}
+
 func (st *State) addToClaim(claims *adt.Map, miner addr.Address, power abi.StoragePower, qapower abi.StoragePower) error {
 	oldClaim, ok, err := getClaim(claims, miner)
 	if err != nil {
@@ -159,12 +171,18 @@ func (st *State) addToClaim(claims *adt.Map, miner addr.Address, power abi.Stora
 	st.TotalBytesCommitted = big.Add(st.TotalBytesCommitted, power)
 
 	newClaim := Claim{
+		SealProofType:   oldClaim.SealProofType,
 		RawBytePower:    big.Add(oldClaim.RawBytePower, power),
 		QualityAdjPower: big.Add(oldClaim.QualityAdjPower, qapower),
 	}
 
-	prevBelow := oldClaim.QualityAdjPower.LessThan(ConsensusMinerMinPower)
-	stillBelow := newClaim.QualityAdjPower.LessThan(ConsensusMinerMinPower)
+	minPower, err := builtin.ConsensusMinerMinPower(oldClaim.SealProofType)
+	if err != nil {
+		return fmt.Errorf("could not get consensus miner min power: %w", err)
+	}
+
+	prevBelow := oldClaim.RawBytePower.LessThan(minPower)
+	stillBelow := newClaim.RawBytePower.LessThan(minPower)
 
 	if prevBelow && !stillBelow {
 		// just passed min miner size
@@ -186,6 +204,37 @@ func (st *State) addToClaim(claims *adt.Map, miner addr.Address, power abi.Stora
 	AssertMsg(newClaim.QualityAdjPower.GreaterThanEqual(big.Zero()), "negative claimed quality adjusted power: %v", newClaim.QualityAdjPower)
 	AssertMsg(st.MinerAboveMinPowerCount >= 0, "negative number of miners larger than min: %v", st.MinerAboveMinPowerCount)
 	return setClaim(claims, miner, &newClaim)
+}
+
+func (st *State) updateStatsForNewMiner(sealProof abi.RegisteredSealProof) error {
+	minPower, err := builtin.ConsensusMinerMinPower(sealProof)
+	if err != nil {
+		return fmt.Errorf("could not get consensus miner min power: %w", err)
+	}
+
+	if minPower.LessThanEqual(big.Zero()) {
+		st.MinerAboveMinPowerCount++
+	}
+	return nil
+}
+
+func (st *State) deleteClaim(claims *adt.Map, miner addr.Address) error {
+	oldClaim, ok, err := getClaim(claims, miner)
+	if err != nil {
+		return fmt.Errorf("failed to get claim: %w", err)
+	}
+	if !ok {
+		return nil // no record, we're done
+	}
+
+	// subtract from stats as if we were simply removing power
+	err = st.addToClaim(claims, miner, oldClaim.RawBytePower.Neg(), oldClaim.QualityAdjPower.Neg())
+	if err != nil {
+		return fmt.Errorf("failed to subtract miner power before deleting claim: %w", err)
+	}
+
+	// delete claim from state to invalidate miner
+	return claims.Delete(abi.AddrKey(miner))
 }
 
 func getClaim(claims *adt.Map, a addr.Address) (*Claim, bool, error) {
