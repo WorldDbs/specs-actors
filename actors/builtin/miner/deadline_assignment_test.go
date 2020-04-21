@@ -10,6 +10,7 @@ import (
 
 func TestDeadlineAssignment(t *testing.T) {
 	const partitionSize = 4
+	const maxPartitions = 100
 
 	type deadline struct {
 		liveSectors, deadSectors uint64
@@ -151,7 +152,8 @@ func TestDeadlineAssignment(t *testing.T) {
 		for i := range sectors {
 			sectors[i] = &SectorOnChainInfo{SectorNumber: abi.SectorNumber(i)}
 		}
-		assignment := assignDeadlines(partitionSize, &deadlines, sectors)
+		assignment, err := assignDeadlines(maxPartitions, partitionSize, &deadlines, sectors)
+		require.NoError(t, err)
 		for i, sectors := range assignment {
 			dl := tc.deadlines[i]
 			// blackout?
@@ -166,4 +168,75 @@ func TestDeadlineAssignment(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestMaxPartitionsPerDeadline(t *testing.T) {
+	const maxPartitions = 5
+	const partitionSize = 5
+
+	t.Run("fails if all deadlines hit their max partitions limit before assigning all sectors to deadlines", func(T *testing.T) {
+		// one deadline can take 5 * 5 = 25 sectors
+		// so 48 deadlines can take 48 * 25 = 1200 sectors.
+		// Hence, we should fail if we try to assign 1201 sectors.
+
+		var deadlines [WPoStPeriodDeadlines]*Deadline
+		for i := range deadlines {
+			deadlines[i] = &Deadline{
+				LiveSectors:  0,
+				TotalSectors: 0,
+			}
+		}
+
+		sectors := make([]*SectorOnChainInfo, 1201)
+		for i := range sectors {
+			sectors[i] = &SectorOnChainInfo{SectorNumber: abi.SectorNumber(i)}
+		}
+
+		_, err := assignDeadlines(maxPartitions, partitionSize, &deadlines, sectors)
+		require.Error(t, err)
+	})
+
+	t.Run("succeeds if all all deadlines hit their max partitions limit but assignment is complete", func(t *testing.T) {
+		// one deadline can take 5 * 5 = 25 sectors
+		// so 48 deadlines that can take 48 * 25 = 1200 sectors.
+		var deadlines [WPoStPeriodDeadlines]*Deadline
+		for i := range deadlines {
+			deadlines[i] = &Deadline{
+				LiveSectors:  0,
+				TotalSectors: 0,
+			}
+		}
+
+		sectors := make([]*SectorOnChainInfo, 1200)
+		for i := range sectors {
+			sectors[i] = &SectorOnChainInfo{SectorNumber: abi.SectorNumber(i)}
+		}
+
+		deadlineToSectors, err := assignDeadlines(maxPartitions, partitionSize, &deadlines, sectors)
+		require.NoError(t, err)
+
+		for _, sectors := range deadlineToSectors {
+			require.Len(t, sectors, 25) // there should be (1200/48) = 25 sectors per deadline
+		}
+	})
+
+	t.Run("fails if some deadlines have sectors beforehand and all deadlines hit their max partition limit", func(t *testing.T) {
+		var deadlines [WPoStPeriodDeadlines]*Deadline
+		for i := range deadlines {
+			deadlines[i] = &Deadline{
+				LiveSectors:  1,
+				TotalSectors: 2,
+			}
+		}
+
+		// can only take 1200 - (2 * 48) = 1104 sectors
+
+		sectors := make([]*SectorOnChainInfo, 1105)
+		for i := range sectors {
+			sectors[i] = &SectorOnChainInfo{SectorNumber: abi.SectorNumber(i)}
+		}
+
+		_, err := assignDeadlines(maxPartitions, partitionSize, &deadlines, sectors)
+		require.Error(t, err)
+	})
 }
