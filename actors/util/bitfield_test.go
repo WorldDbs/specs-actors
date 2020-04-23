@@ -7,7 +7,7 @@ import (
 	"github.com/filecoin-project/go-bitfield"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/filecoin-project/specs-actors/actors/util"
+	"github.com/filecoin-project/specs-actors/v2/actors/util"
 )
 
 func TestBitFieldUnset(t *testing.T) {
