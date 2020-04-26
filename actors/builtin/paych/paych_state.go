@@ -2,8 +2,8 @@ package paych
 
 import (
 	addr "github.com/filecoin-project/go-address"
-	abi "github.com/filecoin-project/go-state-types/abi"
-	big "github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
 	"github.com/ipfs/go-cid"
 )
 
@@ -33,12 +33,6 @@ type State struct {
 type LaneState struct {
 	Redeemed big.Int
 	Nonce    uint64
-}
-
-// Specifies which `Lane`s to be merged with what `Nonce` on channelUpdate
-type Merge struct {
-	Lane  uint64
-	Nonce uint64
 }
 
 func ConstructState(from addr.Address, to addr.Address, emptyArrCid cid.Cid) *State {
