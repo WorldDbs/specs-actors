@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/filecoin-project/specs-actors/actors/runtime"
-	"github.com/filecoin-project/specs-actors/actors/states"
 	"testing"
 
 	"github.com/filecoin-project/go-address"
@@ -15,24 +13,26 @@ import (
 	"github.com/filecoin-project/go-state-types/dline"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/ipfs/go-cid"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/builtin/account"
-	"github.com/filecoin-project/specs-actors/actors/builtin/cron"
-	"github.com/filecoin-project/specs-actors/actors/builtin/exported"
-	initactor "github.com/filecoin-project/specs-actors/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/actors/builtin/system"
-	"github.com/filecoin-project/specs-actors/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/actors/util/smoothing"
-	"github.com/filecoin-project/specs-actors/support/ipld"
-	actor_testing "github.com/filecoin-project/specs-actors/support/testing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/cron"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/exported"
+	initactor "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/system"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v2/actors/states"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
+	actor_testing "github.com/filecoin-project/specs-actors/v2/support/testing"
 )
 
 var FIL = big.NewInt(1e18)
@@ -51,14 +51,13 @@ func init() {
 //
 
 // Creates a new VM and initializes all singleton actors plus a root verifier account.
-func NewVMWithSingletons(ctx context.Context, t *testing.T) *VM {
-	store := ipld.NewADTStore(ctx)
-
+func NewVMWithSingletons(ctx context.Context, t testing.TB, bs ipldcbor.IpldBlockstore) *VM {
 	lookup := map[cid.Cid]runtime.VMActor{}
 	for _, ba := range exported.BuiltinActors() {
 		lookup[ba.Code()] = ba
 	}
 
+	store := adt.WrapStore(ctx, ipldcbor.NewCborStore(bs))
 	vm := NewVM(ctx, lookup, store)
 
 	emptyMapCID, err := adt.MakeEmptyMap(vm.store).Root()
@@ -74,7 +73,7 @@ func NewVMWithSingletons(ctx context.Context, t *testing.T) *VM {
 	initializeActor(ctx, t, vm, initState, builtin.InitActorCodeID, builtin.InitActorAddr, big.Zero())
 
 	rewardState := reward.ConstructState(abi.NewStoragePower(0))
-	initializeActor(ctx, t, vm, rewardState, builtin.RewardActorCodeID, builtin.RewardActorAddr, big.Max(big.NewInt(14e8), FIL))
+	initializeActor(ctx, t, vm, rewardState, builtin.RewardActorCodeID, builtin.RewardActorAddr, reward.StorageMiningAllocationCheck)
 
 	cronState := cron.ConstructState(cron.BuiltInEntries())
 	initializeActor(ctx, t, vm, cronState, builtin.CronActorCodeID, builtin.CronActorAddr, big.Zero())
@@ -100,7 +99,7 @@ func NewVMWithSingletons(ctx context.Context, t *testing.T) *VM {
 }
 
 // Creates n account actors in the VM with the given balance
-func CreateAccounts(ctx context.Context, t *testing.T, vm *VM, n int, balance abi.TokenAmount, seed int64) []address.Address {
+func CreateAccounts(ctx context.Context, t testing.TB, vm *VM, n int, balance abi.TokenAmount, seed int64) []address.Address {
 	var initState initactor.State
 	err := vm.GetState(builtin.InitActorAddr, &initState)
 	require.NoError(t, err)
@@ -116,7 +115,7 @@ func CreateAccounts(ctx context.Context, t *testing.T, vm *VM, n int, balance ab
 			idAddr:  idAddr,
 		}
 	}
-	err = vm.setActorState(ctx, builtin.InitActorAddr, &initState)
+	err = vm.SetActorState(ctx, builtin.InitActorAddr, &initState)
 	require.NoError(t, err)
 
 	pubAddrs := make([]address.Address, len(addrPairs))
@@ -219,6 +218,7 @@ func listInvocations(invocations []*Invocation) string {
 
 // helpers to simplify pointer creation
 func ExpectAttoFil(amount big.Int) *big.Int                    { return &amount }
+func ExpectBytes(b []byte) *objectExpectation                  { return ExpectObject(builtin.CBORBytes(b)) }
 func ExpectExitCode(code exitcode.ExitCode) *exitcode.ExitCode { return &code }
 
 func ExpectObject(v cbor.Marshaler) *objectExpectation {
@@ -354,6 +354,7 @@ func SectorDeadline(t *testing.T, v *VM, minerIDAddress address.Address, sectorN
 type MinerBalances struct {
 	AvailableBalance abi.TokenAmount
 	VestingBalance   abi.TokenAmount
+	InitialPledge    abi.TokenAmount
 	PreCommitDeposit abi.TokenAmount
 }
 
@@ -367,9 +368,10 @@ func GetMinerBalances(t *testing.T, vm *VM, minerIdAddr address.Address) MinerBa
 	require.NoError(t, err)
 
 	return MinerBalances{
-		AvailableBalance: big.Subtract(a.Balance, state.PreCommitDeposits, state.LockedFunds),
+		AvailableBalance: big.Subtract(a.Balance, state.PreCommitDeposits, state.InitialPledge, state.LockedFunds, state.FeeDebt),
 		PreCommitDeposit: state.PreCommitDeposits,
 		VestingBalance:   state.LockedFunds,
+		InitialPledge:    state.InitialPledge,
 	}
 }
 
@@ -392,11 +394,7 @@ func MinerPower(t *testing.T, vm *VM, minerIdAddr address.Address) miner.PowerPa
 	err := vm.GetState(builtin.StoragePowerActorAddr, &state)
 	require.NoError(t, err)
 
-	claims, err := adt.AsMap(vm.store, state.Claims)
-	require.NoError(t, err)
-
-	var claim power.Claim
-	found, err := claims.Get(abi.AddrKey(minerIdAddr), &claim)
+	claim, found, err := state.GetClaim(vm.store, minerIdAddr)
 	require.NoError(t, err)
 	require.True(t, found)
 
@@ -416,8 +414,9 @@ type NetworkStats struct {
 	MinerCount                    int64
 	MinerAboveMinPowerCount       int64
 	ThisEpochReward               abi.TokenAmount
-	ThisEpochRewardSmoothed       *smoothing.FilterEstimate
+	ThisEpochRewardSmoothed       smoothing.FilterEstimate
 	ThisEpochBaselinePower        abi.StoragePower
+	TotalStoragePowerReward       abi.TokenAmount
 	TotalClientLockedCollateral   abi.TokenAmount
 	TotalProviderLockedCollateral abi.TokenAmount
 	TotalClientStorageFee         abi.TokenAmount
@@ -450,6 +449,7 @@ func GetNetworkStats(t *testing.T, vm *VM) NetworkStats {
 		ThisEpochReward:               rewardState.ThisEpochReward,
 		ThisEpochRewardSmoothed:       rewardState.ThisEpochRewardSmoothed,
 		ThisEpochBaselinePower:        rewardState.ThisEpochBaselinePower,
+		TotalStoragePowerReward:       rewardState.TotalStoragePowerReward,
 		TotalClientLockedCollateral:   marketState.TotalClientLockedCollateral,
 		TotalProviderLockedCollateral: marketState.TotalProviderLockedCollateral,
 		TotalClientStorageFee:         marketState.TotalClientStorageFee,
@@ -484,7 +484,7 @@ func ApplyOk(t *testing.T, v *VM, from, to address.Address, value abi.TokenAmoun
 //  internal stuff
 //
 
-func initializeActor(ctx context.Context, t *testing.T, vm *VM, state cbor.Marshaler, code cid.Cid, a address.Address, balance abi.TokenAmount) {
+func initializeActor(ctx context.Context, t testing.TB, vm *VM, state cbor.Marshaler, code cid.Cid, a address.Address, balance abi.TokenAmount) {
 	stateCID, err := vm.store.Put(ctx, state)
 	require.NoError(t, err)
 	actor := &states.Actor{
