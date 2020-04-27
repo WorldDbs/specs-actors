@@ -3,10 +3,9 @@ package vm_test
 import (
 	"context"
 	"fmt"
-	"github.com/filecoin-project/specs-actors/actors/states"
 
 	"github.com/filecoin-project/go-address"
-	hamt "github.com/filecoin-project/go-hamt-ipld"
+	hamt "github.com/filecoin-project/go-hamt-ipld/v2"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/cbor"
@@ -16,10 +15,11 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/pkg/errors"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	init_ "github.com/filecoin-project/specs-actors/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/actors/runtime"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	init_ "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v2/actors/states"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
 )
 
 // VM is a simplified message execution framework for the purposes of testing inter-actor communication.
@@ -33,26 +33,25 @@ type VM struct {
 	currentEpoch   abi.ChainEpoch
 	networkVersion network.Version
 
-	actorImpls  ActorImplLookup
+	ActorImpls  ActorImplLookup
 	stateRoot   cid.Cid  // The last committed root.
 	actors      *adt.Map // The current (not necessarily committed) root node.
 	actorsDirty bool
 
-	emptyObject cid.Cid
+	emptyObject  cid.Cid
+	callSequence uint64
 
 	logs            []string
 	invocationStack []*Invocation
 	invocations     []*Invocation
+
+	statsSource   StatsSource
+	statsByMethod StatsByCall
+
+	circSupply abi.TokenAmount
 }
 
 // VM types
-
-// Simplifed actor implementation that does not contain message nonce.
-type TestActor struct {
-	Head    cid.Cid
-	Code    cid.Cid
-	Balance abi.TokenAmount
-}
 
 type ActorImplLookup map[cid.Cid]runtime.VMActor
 
@@ -73,8 +72,6 @@ type Invocation struct {
 
 // NewVM creates a new runtime for executing messages.
 func NewVM(ctx context.Context, actorImpls ActorImplLookup, store adt.Store) *VM {
-	// Note: this uses the most recent HAMT implementation.
-	// To test across chain state upgrades, factor out this initial state tree construction.
 	actors := adt.MakeEmptyMap(store)
 	actorRoot, err := actors.Root()
 	if err != nil {
@@ -88,14 +85,43 @@ func NewVM(ctx context.Context, actorImpls ActorImplLookup, store adt.Store) *VM
 
 	return &VM{
 		ctx:            ctx,
-		actorImpls:     actorImpls,
+		ActorImpls:     actorImpls,
 		store:          store,
 		actors:         actors,
 		stateRoot:      actorRoot,
 		actorsDirty:    false,
 		emptyObject:    emptyObject,
 		networkVersion: network.VersionMax,
+		statsByMethod:  make(StatsByCall),
+		circSupply:     big.Mul(big.NewInt(1e9), big.NewInt(1e18)),
 	}
+}
+
+// NewVM creates a new runtime for executing messages.
+func NewVMAtEpoch(ctx context.Context, actorImpls ActorImplLookup, store adt.Store, stateRoot cid.Cid, epoch abi.ChainEpoch) (*VM, error) {
+	actors, err := adt.AsMap(store, stateRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	emptyObject, err := store.Put(context.TODO(), []struct{}{})
+	if err != nil {
+		panic(err)
+	}
+
+	return &VM{
+		ctx:            ctx,
+		ActorImpls:     actorImpls,
+		currentEpoch:   epoch,
+		store:          store,
+		actors:         actors,
+		stateRoot:      stateRoot,
+		actorsDirty:    false,
+		emptyObject:    emptyObject,
+		networkVersion: network.VersionMax,
+		statsByMethod:  make(StatsByCall),
+		circSupply:     big.Mul(big.NewInt(1e9), big.NewInt(1e18)),
+	}, nil
 }
 
 func (vm *VM) WithEpoch(epoch abi.ChainEpoch) (*VM, error) {
@@ -111,7 +137,7 @@ func (vm *VM) WithEpoch(epoch abi.ChainEpoch) (*VM, error) {
 
 	return &VM{
 		ctx:            vm.ctx,
-		actorImpls:     vm.actorImpls,
+		ActorImpls:     vm.ActorImpls,
 		store:          vm.store,
 		actors:         actors,
 		stateRoot:      vm.stateRoot,
@@ -119,28 +145,37 @@ func (vm *VM) WithEpoch(epoch abi.ChainEpoch) (*VM, error) {
 		emptyObject:    vm.emptyObject,
 		currentEpoch:   epoch,
 		networkVersion: vm.networkVersion,
+		statsSource:    vm.statsSource,
+		statsByMethod:  make(StatsByCall),
+		circSupply:     vm.circSupply,
 	}, nil
 }
 
-func (vm *VM) WithRoot(root cid.Cid) (*VM, error) {
-	newVM := &VM{
-		ctx:            vm.ctx,
-		actorImpls:     vm.actorImpls,
-		store:          vm.store,
-		stateRoot:      root,
-		actorsDirty:    false,
-		emptyObject:    vm.emptyObject,
-		currentEpoch:   vm.currentEpoch,
-		networkVersion: vm.networkVersion,
-	}
-
-	actors, err := adt.AsMap(newVM.store, newVM.stateRoot)
+func (vm *VM) WithNetworkVersion(nv network.Version) (*VM, error) {
+	_, err := vm.checkpoint()
 	if err != nil {
 		return nil, err
 	}
-	newVM.actors = actors
 
-	return newVM, nil
+	actors, err := adt.AsMap(vm.store, vm.stateRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	return &VM{
+		ctx:            vm.ctx,
+		ActorImpls:     vm.ActorImpls,
+		store:          vm.store,
+		actors:         actors,
+		stateRoot:      vm.stateRoot,
+		actorsDirty:    false,
+		emptyObject:    vm.emptyObject,
+		currentEpoch:   vm.currentEpoch,
+		networkVersion: nv,
+		statsSource:    vm.statsSource,
+		statsByMethod:  make(StatsByCall),
+		circSupply:     vm.circSupply,
+	}, nil
 }
 
 func (vm *VM) rollback(root cid.Cid) error {
@@ -169,7 +204,7 @@ func (vm *VM) GetActor(a address.Address) (*states.Actor, bool, error) {
 // SetActor sets the the actor to the given value whether it previously existed or not.
 //
 // This method will not check if the actor previously existed, it will blindly overwrite it.
-func (vm *VM) setActor(ctx context.Context, key address.Address, a *states.Actor) error {
+func (vm *VM) setActor(_ context.Context, key address.Address, a *states.Actor) error {
 	if err := vm.actors.Put(abi.AddrKey(key), a); err != nil {
 		return errors.Wrap(err, "setting actor in state tree failed")
 	}
@@ -177,8 +212,8 @@ func (vm *VM) setActor(ctx context.Context, key address.Address, a *states.Actor
 	return nil
 }
 
-// setActorState stores the state and updates the addressed actor
-func (vm *VM) setActorState(ctx context.Context, key address.Address, state cbor.Marshaler) error {
+// SetActorState stores the state and updates the addressed actor
+func (vm *VM) SetActorState(ctx context.Context, key address.Address, state cbor.Marshaler) error {
 	stateCid, err := vm.store.Put(ctx, state)
 	if err != nil {
 		return err
@@ -199,7 +234,7 @@ func (vm *VM) setActorState(ctx context.Context, key address.Address, state cbor
 // This method will NOT return an error if the actor was not found.
 // This behaviour is based on a principle that some store implementations might not be able to determine
 // whether something exists before deleting it.
-func (vm *VM) deleteActor(ctx context.Context, key address.Address) error {
+func (vm *VM) deleteActor(_ context.Context, key address.Address) error {
 	err := vm.actors.Delete(abi.AddrKey(key))
 	vm.actorsDirty = true
 	if err == hamt.ErrNotFound {
@@ -255,12 +290,12 @@ func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, meth
 	// (see: `invocationContext.invoke()` for the dispatch and execution)
 
 	// load actor from global state
-	var ok bool
-	if from, ok = vm.NormalizeAddress(from); !ok {
+	fromID, ok := vm.NormalizeAddress(from)
+	if !ok {
 		return nil, exitcode.SysErrSenderInvalid
 	}
 
-	fromActor, found, err := vm.GetActor(from)
+	fromActor, found, err := vm.GetActor(fromID)
 	if err != nil {
 		panic(err)
 	}
@@ -284,12 +319,18 @@ func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, meth
 	// 3. process the msg
 
 	topLevel := topLevelContext{
+		originatorStableAddress: from,
+		// this should be nonce, but we only care that it creates a unique stable address
+		originatorCallSeq:    vm.callSequence,
 		newActorAddressCount: 0,
+		statsSource:          vm.statsSource,
+		circSupply:           vm.circSupply,
 	}
+	vm.callSequence++
 
 	// build internal msg
 	imsg := InternalMessage{
-		from:   from,
+		from:   fromID,
 		to:     to,
 		value:  value,
 		method: method,
@@ -302,12 +343,20 @@ func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, meth
 	// 3. invoke
 	ret, exitCode := ctx.invoke()
 
+	// record stats
+	vm.statsByMethod.MergeStats(ctx.toActor.Code, imsg.method, ctx.stats)
+
 	// Roll back all state if the receipt's exit code is not ok.
 	// This is required in addition to rollback within the invocation context since top level messages can fail for
 	// more reasons than internal ones. Invocation context still needs its own rollback so actors can recover and
 	// proceed from a nested call failure.
 	if exitCode != exitcode.Ok {
 		if err := vm.rollback(priorRoot); err != nil {
+			panic(err)
+		}
+	} else {
+		// persist changes from final invocation if call is ok
+		if _, err := vm.checkpoint(); err != nil {
 			panic(err)
 		}
 	}
@@ -330,6 +379,31 @@ func (vm *VM) GetState(addr address.Address, out cbor.Unmarshaler) error {
 	return vm.store.Get(vm.ctx, act.Head, out)
 }
 
+func (vm *VM) GetStateTree() (*states.Tree, error) {
+	root, err := vm.checkpoint()
+	if err != nil {
+		return nil, err
+	}
+
+	return states.LoadTree(vm.store, root)
+}
+
+func (vm *VM) GetTotalActorBalance() (abi.TokenAmount, error) {
+	tree, err := vm.GetStateTree()
+	if err != nil {
+		return big.Zero(), err
+	}
+	total := big.Zero()
+	err = tree.ForEach(func(_ address.Address, actor *states.Actor) error {
+		total = big.Add(total, actor.Balance)
+		return nil
+	})
+	if err != nil {
+		return big.Zero(), err
+	}
+	return total, nil
+}
+
 func (vm *VM) Store() adt.Store {
 	return vm.store
 }
@@ -337,6 +411,25 @@ func (vm *VM) Store() adt.Store {
 // Get the chain epoch for this vm
 func (vm *VM) GetEpoch() abi.ChainEpoch {
 	return vm.currentEpoch
+}
+
+// Get call stats
+func (vm *VM) GetCallStats() map[MethodKey]*CallStats {
+	return vm.statsByMethod
+}
+
+// Set the FIL circulating supply passed to actors through runtime
+func (vm *VM) SetCirculatingSupply(supply abi.TokenAmount) {
+	vm.circSupply = supply
+}
+
+// Set the FIL circulating supply passed to actors through runtime
+func (vm *VM) GetCirculatingSupply() abi.TokenAmount {
+	return vm.circSupply
+}
+
+func (vm *VM) GetActorImpls() map[cid.Cid]rt.VMActor {
+	return vm.ActorImpls
 }
 
 // transfer debits money from one account and credits it to another.
@@ -391,11 +484,51 @@ func (vm *VM) transfer(debitFrom address.Address, creditTo address.Address, amou
 }
 
 func (vm *VM) getActorImpl(code cid.Cid) runtime.VMActor {
-	actorImpl, ok := vm.actorImpls[code]
+	actorImpl, ok := vm.ActorImpls[code]
 	if !ok {
 		vm.Abortf(exitcode.SysErrInvalidReceiver, "actor implementation not found for Exitcode %v", code)
 	}
 	return actorImpl
+}
+
+//
+// stats
+//
+
+func (vm *VM) SetStatsSource(s StatsSource) {
+	vm.statsSource = s
+}
+
+func (vm *VM) GetStatsSource() StatsSource {
+	return vm.statsSource
+}
+
+func (vm *VM) StoreReads() uint64 {
+	if vm.statsSource != nil {
+		return vm.statsSource.ReadCount()
+	}
+	return 0
+}
+
+func (vm *VM) StoreWrites() uint64 {
+	if vm.statsSource != nil {
+		return vm.statsSource.WriteCount()
+	}
+	return 0
+}
+
+func (vm *VM) StoreReadBytes() uint64 {
+	if vm.statsSource != nil {
+		return vm.statsSource.ReadSize()
+	}
+	return 0
+}
+
+func (vm *VM) StoreWriteBytes() uint64 {
+	if vm.statsSource != nil {
+		return vm.statsSource.WriteSize()
+	}
+	return 0
 }
 
 //
@@ -434,8 +567,12 @@ func (vm *VM) LastInvocation() *Invocation {
 // implement runtime.Runtime for VM
 //
 
-func (vm *VM) Log(level rt.LogLevel, msg string, args ...interface{}) {
+func (vm *VM) Log(_ rt.LogLevel, msg string, args ...interface{}) {
 	vm.logs = append(vm.logs, fmt.Sprintf(msg, args...))
+}
+
+func (vm *VM) GetLogs() []string {
+	return vm.logs
 }
 
 type abort struct {
