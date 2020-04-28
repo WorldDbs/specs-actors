@@ -7,7 +7,7 @@ import (
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"golang.org/x/xerrors"
 
-	. "github.com/filecoin-project/specs-actors/actors/util"
+	. "github.com/filecoin-project/specs-actors/v2/actors/util"
 )
 
 // if the returned error is not nil, the Runtime will exit with the returned exit code.
