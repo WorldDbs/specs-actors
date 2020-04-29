@@ -12,8 +12,8 @@ EPOCH_DURATION_SECONDS = 30
 # Total Filecoin supply
 SIMPLE_SUPPLY_TOTAL=330000000
 
-# Growth factor per year. Currently 200%.
-GROWTH_FACTOR = 2
+# Growth factor per year. Currently 100%.
+GROWTH_FACTOR = 1.0
 
 # Seconds in a year, according to filecoin. This is actually slightly shorter
 # than a year, but it's close enough.
