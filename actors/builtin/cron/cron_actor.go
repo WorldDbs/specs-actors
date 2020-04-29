@@ -3,10 +3,11 @@ package cron
 import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/cbor"
+	cron0 "github.com/filecoin-project/specs-actors/actors/builtin/cron"
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
 )
 
 // The cron actor is a built-in singleton that sends messages to other registered actors at the end of each epoch.
@@ -33,13 +34,20 @@ func (a Actor) State() cbor.Er {
 
 var _ runtime.VMActor = Actor{}
 
-type ConstructorParams struct {
-	Entries []Entry
-}
+//type ConstructorParams struct {
+//	Entries []Entry
+//}
+type ConstructorParams = cron0.ConstructorParams
+
+type EntryParam = cron0.Entry
 
 func (a Actor) Constructor(rt runtime.Runtime, params *ConstructorParams) *abi.EmptyValue {
 	rt.ValidateImmediateCallerIs(builtin.SystemActorAddr)
-	rt.StateCreate(ConstructState(params.Entries))
+	entries := make([]Entry, len(params.Entries))
+	for i, e := range params.Entries {
+		entries[i] = Entry(e) // Identical
+	}
+	rt.StateCreate(ConstructState(entries))
 	return nil
 }
 
