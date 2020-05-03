@@ -1,20 +1,22 @@
 package reward
 
 import (
-	"github.com/filecoin-project/go-address"
-
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	rtt "github.com/filecoin-project/go-state-types/rt"
+	reward0 "github.com/filecoin-project/specs-actors/actors/builtin/reward"
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/runtime"
-	. "github.com/filecoin-project/specs-actors/actors/util"
-	"github.com/filecoin-project/specs-actors/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	. "github.com/filecoin-project/specs-actors/v2/actors/util"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
 )
+
+// PenaltyMultiplier is the factor miner penaltys are scaled up by
+const PenaltyMultiplier = 3
 
 type Actor struct{}
 
@@ -45,7 +47,7 @@ func (a Actor) Constructor(rt runtime.Runtime, currRealizedPower *abi.StoragePow
 	rt.ValidateImmediateCallerIs(builtin.SystemActorAddr)
 
 	if currRealizedPower == nil {
-		rt.Abortf(exitcode.ErrIllegalArgument, "arugment should not be nil")
+		rt.Abortf(exitcode.ErrIllegalArgument, "argument should not be nil")
 		return nil // linter does not understand abort exiting
 	}
 	st := ConstructState(*currRealizedPower)
@@ -53,12 +55,13 @@ func (a Actor) Constructor(rt runtime.Runtime, currRealizedPower *abi.StoragePow
 	return nil
 }
 
-type AwardBlockRewardParams struct {
-	Miner     address.Address
-	Penalty   abi.TokenAmount // penalty for including bad messages in a block, >= 0
-	GasReward abi.TokenAmount // gas reward from all gas fees in a block, >= 0
-	WinCount  int64           // number of reward units won, > 0
-}
+//type AwardBlockRewardParams struct {
+//	Miner     address.Address
+//	Penalty   abi.TokenAmount // penalty for including bad messages in a block, >= 0
+//	GasReward abi.TokenAmount // gas reward from all gas fees in a block, >= 0
+//	WinCount  int64           // number of reward units won, > 0
+//}
+type AwardBlockRewardParams = reward0.AwardBlockRewardParams
 
 // Awards a reward to a block producer.
 // This method is called only by the system actor, implicitly, as the last message in the evaluation of a block.
@@ -91,8 +94,8 @@ func (a Actor) AwardBlockReward(rt runtime.Runtime, params *AwardBlockRewardPara
 	if !ok {
 		rt.Abortf(exitcode.ErrNotFound, "failed to resolve given owner address")
 	}
-
-	penalty := abi.NewTokenAmount(0)
+	// The miner penalty is scaled up by a factor of PenaltyMultiplier
+	penalty := big.Mul(big.NewInt(PenaltyMultiplier), params.Penalty)
 	totalReward := big.Zero()
 	var st State
 	rt.StateTransaction(&st, func() {
@@ -109,40 +112,32 @@ func (a Actor) AwardBlockReward(rt runtime.Runtime, params *AwardBlockRewardPara
 			// Since we have already asserted the balance is greater than gas reward blockReward is >= 0
 			AssertMsg(blockReward.GreaterThanEqual(big.Zero()), "programming error, block reward is %v below zero", blockReward)
 		}
-		st.TotalMined = big.Add(st.TotalMined, blockReward)
+		st.TotalStoragePowerReward = big.Add(st.TotalStoragePowerReward, blockReward)
 	})
 
-	// Cap the penalty at the total reward value.
-	penalty = big.Min(params.Penalty, totalReward)
-
-	// Reduce the payable reward by the penalty.
-	rewardPayable := big.Sub(totalReward, penalty)
-
-	AssertMsg(big.Add(rewardPayable, penalty).LessThanEqual(priorBalance),
-		"reward payable %v + penalty %v exceeds balance %v", rewardPayable, penalty, priorBalance)
+	AssertMsg(totalReward.LessThanEqual(priorBalance), "reward %v exceeds balance %v", totalReward, priorBalance)
 
 	// if this fails, we can assume the miner is responsible and avoid failing here.
-	code := rt.Send(minerAddr, builtin.MethodsMiner.AddLockedFund, &rewardPayable, rewardPayable, &builtin.Discard{})
+	rewardParams := builtin.ApplyRewardParams{
+		Reward:  totalReward,
+		Penalty: penalty,
+	}
+	code := rt.Send(minerAddr, builtin.MethodsMiner.ApplyRewards, &rewardParams, totalReward, &builtin.Discard{})
 	if !code.IsSuccess() {
-		rt.Log(rtt.ERROR, "failed to send AddLockedFund call to the miner actor with funds: %v, code: %v", rewardPayable, code)
-		code := rt.Send(builtin.BurntFundsActorAddr, builtin.MethodSend, nil, rewardPayable, &builtin.Discard{})
+		rt.Log(rtt.ERROR, "failed to send ApplyRewards call to the miner actor with funds: %v, code: %v", totalReward, code)
+		code := rt.Send(builtin.BurntFundsActorAddr, builtin.MethodSend, nil, totalReward, &builtin.Discard{})
 		if !code.IsSuccess() {
 			rt.Log(rtt.ERROR, "failed to send unsent reward to the burnt funds actor, code: %v", code)
 		}
 	}
 
-	// Burn the penalty amount.
-	if penalty.GreaterThan(abi.NewTokenAmount(0)) {
-		code = rt.Send(builtin.BurntFundsActorAddr, builtin.MethodSend, nil, penalty, &builtin.Discard{})
-		builtin.RequireSuccess(rt, code, "failed to send penalty to burnt funds actor")
-	}
-
 	return nil
 }
 
+// Changed since v0:
+// - removed ThisEpochReward (unsmoothed)
 type ThisEpochRewardReturn struct {
-	ThisEpochReward         abi.TokenAmount
-	ThisEpochRewardSmoothed *smoothing.FilterEstimate
+	ThisEpochRewardSmoothed smoothing.FilterEstimate
 	ThisEpochBaselinePower  abi.StoragePower
 }
 
@@ -155,9 +150,8 @@ func (a Actor) ThisEpochReward(rt runtime.Runtime, _ *abi.EmptyValue) *ThisEpoch
 	var st State
 	rt.StateReadonly(&st)
 	return &ThisEpochRewardReturn{
-		ThisEpochReward:         st.ThisEpochReward,
-		ThisEpochBaselinePower:  st.ThisEpochBaselinePower,
 		ThisEpochRewardSmoothed: st.ThisEpochRewardSmoothed,
+		ThisEpochBaselinePower:  st.ThisEpochBaselinePower,
 	}
 }
 
@@ -169,7 +163,6 @@ func (a Actor) UpdateNetworkKPI(rt runtime.Runtime, currRealizedPower *abi.Stora
 	if currRealizedPower == nil {
 		rt.Abortf(exitcode.ErrIllegalArgument, "arugment should not be nil")
 	}
-	networkVersion := rt.NetworkVersion()
 
 	var st State
 	rt.StateTransaction(&st, func() {
@@ -178,10 +171,10 @@ func (a Actor) UpdateNetworkKPI(rt runtime.Runtime, currRealizedPower *abi.Stora
 		// st.Epoch == rt.CurrEpoch()
 		for st.Epoch < rt.CurrEpoch() {
 			// Update to next epoch to process null rounds
-			st.updateToNextEpoch(*currRealizedPower, networkVersion)
+			st.updateToNextEpoch(*currRealizedPower)
 		}
 
-		st.updateToNextEpochWithReward(*currRealizedPower, networkVersion)
+		st.updateToNextEpochWithReward(*currRealizedPower)
 		// only update smoothed estimates after updating reward and epoch
 		st.updateSmoothedEstimates(st.Epoch - prev)
 	})
