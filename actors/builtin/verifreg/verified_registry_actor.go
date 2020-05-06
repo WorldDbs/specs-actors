@@ -3,15 +3,17 @@ package verifreg
 import (
 	addr "github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/cbor"
-	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/runtime"
-	. "github.com/filecoin-project/specs-actors/actors/util"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
+	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/exitcode"
+	verifreg0 "github.com/filecoin-project/specs-actors/actors/builtin/verifreg"
+
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	. "github.com/filecoin-project/specs-actors/v2/actors/util"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
 )
 
 type Actor struct{}
@@ -60,23 +62,25 @@ func (a Actor) Constructor(rt runtime.Runtime, rootKey *addr.Address) *abi.Empty
 	return nil
 }
 
-type AddVerifierParams struct {
-	Address   addr.Address
-	Allowance DataCap
-}
+//type AddVerifierParams struct {
+//	Address   addr.Address
+//	Allowance DataCap
+//}
+type AddVerifierParams = verifreg0.AddVerifierParams
 
 func (a Actor) AddVerifier(rt runtime.Runtime, params *AddVerifierParams) *abi.EmptyValue {
 	if params.Allowance.LessThan(MinVerifiedDealSize) {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Allowance %d below MinVerifiedDealSize for add verifier %v", params.Allowance, params.Address)
 	}
 
+	verifier, err := builtin.ResolveToIDAddr(rt, params.Address)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to resolve verifier address %v to ID address", params.Address)
+
 	var st State
 	rt.StateReadonly(&st)
 	rt.ValidateImmediateCallerIs(st.RootKey)
 
-	// TODO We need to resolve the verifier address to an ID address before making this comparison.
-	// https://github.com/filecoin-project/specs-actors/issues/556
-	if params.Address == st.RootKey {
+	if verifier == st.RootKey {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Rootkey cannot be added as verifier")
 	}
 	rt.StateTransaction(&st, func() {
@@ -87,13 +91,13 @@ func (a Actor) AddVerifier(rt runtime.Runtime, params *AddVerifierParams) *abi.E
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verified clients")
 
 		// A verified client cannot become a verifier
-		found, err := verifiedClients.Get(abi.AddrKey(params.Address), nil)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed get verified client state for %v", params.Address)
+		found, err := verifiedClients.Get(abi.AddrKey(verifier), nil)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed get verified client state for %v", verifier)
 		if found {
-			rt.Abortf(exitcode.ErrIllegalArgument, "verified client %v cannot become a verifier", params.Address)
+			rt.Abortf(exitcode.ErrIllegalArgument, "verified client %v cannot become a verifier", verifier)
 		}
 
-		err = verifiers.Put(abi.AddrKey(params.Address), &params.Allowance)
+		err = verifiers.Put(abi.AddrKey(verifier), &params.Allowance)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to add verifier")
 
 		st.Verifiers, err = verifiers.Root()
@@ -104,6 +108,9 @@ func (a Actor) AddVerifier(rt runtime.Runtime, params *AddVerifierParams) *abi.E
 }
 
 func (a Actor) RemoveVerifier(rt runtime.Runtime, verifierAddr *addr.Address) *abi.EmptyValue {
+	verifier, err := builtin.ResolveToIDAddr(rt, *verifierAddr)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to resolve verifier address %v to ID address", *verifierAddr)
+
 	var st State
 	rt.StateReadonly(&st)
 	rt.ValidateImmediateCallerIs(st.RootKey)
@@ -112,7 +119,7 @@ func (a Actor) RemoveVerifier(rt runtime.Runtime, verifierAddr *addr.Address) *a
 		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verifiers")
 
-		err = verifiers.Delete(abi.AddrKey(*verifierAddr))
+		err = verifiers.Delete(abi.AddrKey(verifier))
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to remove verifier")
 
 		st.Verifiers, err = verifiers.Root()
@@ -122,22 +129,26 @@ func (a Actor) RemoveVerifier(rt runtime.Runtime, verifierAddr *addr.Address) *a
 	return nil
 }
 
-type AddVerifiedClientParams struct {
-	Address   addr.Address
-	Allowance DataCap
-}
+//type AddVerifiedClientParams struct {
+//	Address   addr.Address
+//	Allowance DataCap
+//}
+type AddVerifiedClientParams = verifreg0.AddVerifiedClientParams
 
 func (a Actor) AddVerifiedClient(rt runtime.Runtime, params *AddVerifiedClientParams) *abi.EmptyValue {
+	// The caller will be verified by checking the verifiers table below.
+	rt.ValidateImmediateCallerAcceptAny()
+
 	if params.Allowance.LessThan(MinVerifiedDealSize) {
 		rt.Abortf(exitcode.ErrIllegalArgument, "allowance %d below MinVerifiedDealSize for add verified client %v", params.Allowance, params.Address)
 	}
-	rt.ValidateImmediateCallerAcceptAny()
+
+	client, err := builtin.ResolveToIDAddr(rt, params.Address)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to resolve verified client address %v", params.Address)
 
 	var st State
 	rt.StateReadonly(&st)
-	// TODO We need to resolve the client address to an ID address before making this comparison.
-	// https://github.com/filecoin-project/specs-actors/issues/556
-	if st.RootKey == params.Address {
+	if st.RootKey == client {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Rootkey cannot be added as a verified client")
 	}
 
@@ -149,19 +160,19 @@ func (a Actor) AddVerifiedClient(rt runtime.Runtime, params *AddVerifiedClientPa
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verified clients")
 
 		// Validate caller is one of the verifiers.
-		verifierAddr := rt.Caller()
+		verifier := rt.Caller()
 		var verifierCap DataCap
-		found, err := verifiers.Get(abi.AddrKey(verifierAddr), &verifierCap)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verifier %v", verifierAddr)
+		found, err := verifiers.Get(abi.AddrKey(verifier), &verifierCap)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verifier %v", verifier)
 		if !found {
-			rt.Abortf(exitcode.ErrNotFound, "no such verifier %v", verifierAddr)
+			rt.Abortf(exitcode.ErrNotFound, "no such verifier %v", verifier)
 		}
 
 		// Validate client to be added isn't a verifier
-		found, err = verifiers.Get(abi.AddrKey(params.Address), nil)
+		found, err = verifiers.Get(abi.AddrKey(client), nil)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verifier")
 		if found {
-			rt.Abortf(exitcode.ErrIllegalArgument, "verifier %v cannot be added as a verified client", params.Address)
+			rt.Abortf(exitcode.ErrIllegalArgument, "verifier %v cannot be added as a verified client", client)
 		}
 
 		// Compute new verifier cap and update.
@@ -170,21 +181,21 @@ func (a Actor) AddVerifiedClient(rt runtime.Runtime, params *AddVerifiedClientPa
 		}
 		newVerifierCap := big.Sub(verifierCap, params.Allowance)
 
-		err = verifiers.Put(abi.AddrKey(verifierAddr), &newVerifierCap)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to update new verifier cap (%d) for %v", newVerifierCap, verifierAddr)
+		err = verifiers.Put(abi.AddrKey(verifier), &newVerifierCap)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to update new verifier cap (%d) for %v", newVerifierCap, verifier)
 
 		// This is a one-time, upfront allocation.
 		// This allowance cannot be changed by calls to AddVerifiedClient as long as the client has not been removed.
 		// If parties need more allowance, they need to create a new verified client or use up the the current allowance
 		// and then create a new verified client.
-		found, err = verifiedClients.Get(abi.AddrKey(params.Address), nil)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verified client %v", params.Address)
+		found, err = verifiedClients.Get(abi.AddrKey(client), &verifierCap)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verified client %v", client)
 		if found {
-			rt.Abortf(exitcode.ErrIllegalArgument, "verified client already exists: %v", params.Address)
+			rt.Abortf(exitcode.ErrIllegalArgument, "verified client already exists: %v", client)
 		}
 
-		err = verifiedClients.Put(abi.AddrKey(params.Address), &params.Allowance)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to add verified client %v with cap %d", params.Address, params.Allowance)
+		err = verifiedClients.Put(abi.AddrKey(client), &params.Allowance)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to add verified client %v with cap %d", client, params.Allowance)
 
 		st.Verifiers, err = verifiers.Root()
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to flush verifiers")
@@ -196,16 +207,20 @@ func (a Actor) AddVerifiedClient(rt runtime.Runtime, params *AddVerifiedClientPa
 	return nil
 }
 
-type UseBytesParams struct {
-	Address  addr.Address     // Address of verified client.
-	DealSize abi.StoragePower // Number of bytes to use.
-}
+//type UseBytesParams struct {
+//	Address  addr.Address     // Address of verified client.
+//	DealSize abi.StoragePower // Number of bytes to use.
+//}
+type UseBytesParams = verifreg0.UseBytesParams
 
 // Called by StorageMarketActor during PublishStorageDeals.
 // Do not allow partially verified deals (DealSize must be greater than equal to allowed cap).
 // Delete VerifiedClient if remaining DataCap is smaller than minimum VerifiedDealSize.
 func (a Actor) UseBytes(rt runtime.Runtime, params *UseBytesParams) *abi.EmptyValue {
 	rt.ValidateImmediateCallerIs(builtin.StorageMarketActorAddr)
+
+	client, err := builtin.ResolveToIDAddr(rt, params.Address)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to resolve verified client address %v", params.Address)
 
 	if params.DealSize.LessThan(MinVerifiedDealSize) {
 		rt.Abortf(exitcode.ErrIllegalArgument, "VerifiedDealSize: %d below minimum in UseBytes", params.DealSize)
@@ -217,26 +232,29 @@ func (a Actor) UseBytes(rt runtime.Runtime, params *UseBytesParams) *abi.EmptyVa
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verified clients")
 
 		var vcCap DataCap
-		found, err := verifiedClients.Get(abi.AddrKey(params.Address), &vcCap)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verified client %v", params.Address)
+		found, err := verifiedClients.Get(abi.AddrKey(client), &vcCap)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verified client %v", client)
 		if !found {
-			rt.Abortf(exitcode.ErrNotFound, "no such verified client %v", params.Address)
+			rt.Abortf(exitcode.ErrNotFound, "no such verified client %v", client)
 		}
 		Assert(vcCap.GreaterThanEqual(big.Zero()))
 
 		if params.DealSize.GreaterThan(vcCap) {
-			rt.Abortf(exitcode.ErrIllegalArgument, "DealSize %d exceeds allowable cap: %d for VerifiedClient %v", params.DealSize, vcCap, params.Address)
+			rt.Abortf(exitcode.ErrIllegalArgument, "DealSize %d exceeds allowable cap: %d for VerifiedClient %v", params.DealSize, vcCap, client)
 		}
 
 		newVcCap := big.Sub(vcCap, params.DealSize)
 		if newVcCap.LessThan(MinVerifiedDealSize) {
 			// Delete entry if remaining DataCap is less than MinVerifiedDealSize.
 			// Will be restored later if the deal did not get activated with a ProvenSector.
-			err = verifiedClients.Delete(abi.AddrKey(params.Address))
-			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete verified client %v", params.Address)
+			//
+			// NOTE: Technically, client could lose up to MinVerifiedDealSize worth of DataCap.
+			// See: https://github.com/filecoin-project/specs-actors/issues/727
+			err = verifiedClients.Delete(abi.AddrKey(client))
+			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete verified client %v", client)
 		} else {
-			err = verifiedClients.Put(abi.AddrKey(params.Address), &newVcCap)
-			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to update verified client %v with %v", params.Address, newVcCap)
+			err = verifiedClients.Put(abi.AddrKey(client), &newVcCap)
+			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to update verified client %v with %v", client, newVcCap)
 		}
 
 		st.VerifiedClients, err = verifiedClients.Root()
@@ -246,10 +264,11 @@ func (a Actor) UseBytes(rt runtime.Runtime, params *UseBytesParams) *abi.EmptyVa
 	return nil
 }
 
-type RestoreBytesParams struct {
-	Address  addr.Address
-	DealSize abi.StoragePower
-}
+//type RestoreBytesParams struct {
+//	Address  addr.Address
+//	DealSize abi.StoragePower
+//}
+type RestoreBytesParams = verifreg0.RestoreBytesParams
 
 // Called by HandleInitTimeoutDeals from StorageMarketActor when a VerifiedDeal fails to init.
 // Restore allowable cap for the client, creating new entry if the client has been deleted.
@@ -260,11 +279,12 @@ func (a Actor) RestoreBytes(rt runtime.Runtime, params *RestoreBytesParams) *abi
 		rt.Abortf(exitcode.ErrIllegalArgument, "Below minimum VerifiedDealSize requested in RestoreBytes: %d", params.DealSize)
 	}
 
+	client, err := builtin.ResolveToIDAddr(rt, params.Address)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to resolve verified client addr %v", params.Address)
+
 	var st State
 	rt.StateReadonly(&st)
-	// TODO We need to resolve the client address to an ID address before making this comparison.
-	// https://github.com/filecoin-project/specs-actors/issues/556
-	if st.RootKey == params.Address {
+	if st.RootKey == client {
 		rt.Abortf(exitcode.ErrIllegalArgument, "Cannot restore allowance for Rootkey")
 	}
 
@@ -276,22 +296,22 @@ func (a Actor) RestoreBytes(rt runtime.Runtime, params *RestoreBytesParams) *abi
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verifiers")
 
 		// validate we are NOT attempting to do this for a verifier
-		found, err := verifiers.Get(abi.AddrKey(params.Address), nil)
+		found, err := verifiers.Get(abi.AddrKey(client), nil)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed tp get verifier")
 		if found {
 			rt.Abortf(exitcode.ErrIllegalArgument, "cannot restore allowance for a verifier")
 		}
 
 		var vcCap DataCap
-		found, err = verifiedClients.Get(abi.AddrKey(params.Address), &vcCap)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verified client %v", params.Address)
+		found, err = verifiedClients.Get(abi.AddrKey(client), &vcCap)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verified client %v", client)
 		if !found {
 			vcCap = big.Zero()
 		}
 
 		newVcCap := big.Add(vcCap, params.DealSize)
-		err = verifiedClients.Put(abi.AddrKey(params.Address), &newVcCap)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to put verified client %v with %v", params.Address, newVcCap)
+		err = verifiedClients.Put(abi.AddrKey(client), &newVcCap)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to put verified client %v with %v", client, newVcCap)
 
 		st.VerifiedClients, err = verifiedClients.Root()
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verifiers")
