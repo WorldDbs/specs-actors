@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	goruntime "runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -20,9 +21,12 @@ import (
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 
-	"github.com/filecoin-project/specs-actors/actors/runtime"
-	"github.com/filecoin-project/specs-actors/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/exported"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v2/support/ipld"
 )
 
 // A mock runtime for unit testing of actors in isolation.
@@ -48,9 +52,12 @@ type Runtime struct {
 	balance abi.TokenAmount
 
 	// VM implementation
-	inCall        bool
 	store         map[cid.Cid][]byte
+	inCall        bool
 	inTransaction bool
+	// Maps (references to) loaded state objs to their expected cid.
+	// Used for detecting modifications to state outside of transactions.
+	stateUsedObjs map[cbor.Marshaler]cid.Cid
 	// Syscalls
 	hashfunc func(data []byte) [32]byte
 
@@ -210,7 +217,7 @@ func (rt *Runtime) ValidateImmediateCallerIs(addrs ...addr.Address) {
 			return
 		}
 	}
-	rt.Abortf(exitcode.ErrForbidden, "caller address %v forbidden, allowed: %v", rt.caller, addrs)
+	rt.Abortf(exitcode.SysErrForbidden, "caller address %v forbidden, allowed: %v", rt.caller, addrs)
 }
 
 func (rt *Runtime) ValidateImmediateCallerType(types ...cid.Cid) {
@@ -234,7 +241,7 @@ func (rt *Runtime) ValidateImmediateCallerType(types ...cid.Cid) {
 			return
 		}
 	}
-	rt.Abortf(exitcode.ErrForbidden, "caller type %v forbidden, allowed: %v", rt.callerType, types)
+	rt.Abortf(exitcode.SysErrForbidden, "caller type %v forbidden, allowed: %v", rt.callerType, types)
 }
 
 func (rt *Runtime) CurrentBalance() abi.TokenAmount {
@@ -322,10 +329,23 @@ func (rt *Runtime) Send(toAddr addr.Address, methodNum abi.MethodNum, params cbo
 	exp := rt.expectSends[0]
 
 	if !exp.Equal(toAddr, methodNum, params, value) {
+		toName := "unknown"
+		toMeth := "unknown"
+		expToName := "unknown"
+		expToMeth := "unknown"
+		if code, ok := rt.GetActorCodeCID(toAddr); ok && builtin.IsBuiltinActor(code) {
+			toName = builtin.ActorNameByCode(code)
+			toMeth = getMethodName(code, methodNum)
+		}
+		if code, ok := rt.GetActorCodeCID(exp.to); ok && builtin.IsBuiltinActor(code) {
+			expToName = builtin.ActorNameByCode(code)
+			expToMeth = getMethodName(code, exp.method)
+		}
+
 		rt.failTestNow("unexpected send\n"+
-			"          to: %s method: %d value: %v params: %v\n"+
-			"Expected  to: %s method: %d value: %v params: %v",
-			toAddr, methodNum, value, params, exp.to, exp.method, exp.value, exp.params)
+			"          to: %s (%s) method: %d (%s) value: %v params: %v\n"+
+			"Expected  to: %s (%s) method: %d (%s) value: %v params: %v",
+			toAddr, toName, methodNum, toMeth, value, params, exp.to, expToName, exp.method, expToMeth, exp.value, exp.params)
 	}
 
 	if value.GreaterThan(rt.balance) {
@@ -468,13 +488,7 @@ func (rt *Runtime) StoreGet(c cid.Cid, o cbor.Unmarshaler) bool {
 
 func (rt *Runtime) StorePut(o cbor.Marshaler) cid.Cid {
 	// requireInCall omitted because it makes using this mock runtime as a store awkward.
-	r := bytes.Buffer{}
-	err := o.MarshalCBOR(&r)
-	if err != nil {
-		rt.Abortf(exitcode.ErrSerialization, err.Error())
-	}
-	data := r.Bytes()
-	key, err := abi.CidBuilder.Sum(data)
+	key, data, err := ipld.MarshalCBOR(o)
 	if err != nil {
 		rt.Abortf(exitcode.ErrSerialization, err.Error())
 	}
@@ -507,6 +521,8 @@ func (rt *Runtime) StateCreate(obj cbor.Marshaler) {
 		rt.Abortf(exitcode.SysErrorIllegalActor, "state already constructed")
 	}
 	rt.state = rt.StorePut(obj)
+	// Track the expected CID of the object.
+	rt.stateUsedObjs[obj] = rt.state
 }
 
 func (rt *Runtime) StateReadonly(st cbor.Unmarshaler) {
@@ -514,17 +530,22 @@ func (rt *Runtime) StateReadonly(st cbor.Unmarshaler) {
 	if !found {
 		panic(fmt.Sprintf("actor state not found: %v", rt.state))
 	}
+	// Track the expected CID of the object.
+	rt.stateUsedObjs[st.(cbor.Marshaler)] = rt.state
 }
 
 func (rt *Runtime) StateTransaction(st cbor.Er, f func()) {
 	if rt.inTransaction {
 		rt.Abortf(exitcode.SysErrorIllegalActor, "nested transaction")
 	}
+	rt.checkStateObjectsUnmodified()
 	rt.StateReadonly(st)
 	rt.inTransaction = true
 	defer func() { rt.inTransaction = false }()
 	f()
 	rt.state = rt.StorePut(st)
+	// Track the expected CID of the object.
+	rt.stateUsedObjs[st] = rt.state
 }
 
 ///// Syscalls implementation /////
@@ -1036,7 +1057,11 @@ func (rt *Runtime) Call(method interface{}, params interface{}) interface{} {
 	// If not expected, the panic will escape and cause the test to fail.
 
 	rt.inCall = true
-	defer func() { rt.inCall = false }()
+	rt.stateUsedObjs = map[cbor.Marshaler]cid.Cid{}
+	defer func() {
+		rt.inCall = false
+		rt.stateUsedObjs = nil
+	}()
 	var arg reflect.Value
 	if params != nil {
 		arg = reflect.ValueOf(params)
@@ -1044,7 +1069,23 @@ func (rt *Runtime) Call(method interface{}, params interface{}) interface{} {
 		arg = reflect.ValueOf(abi.Empty)
 	}
 	ret := meth.Call([]reflect.Value{reflect.ValueOf(rt), arg})
+	rt.checkStateObjectsUnmodified()
 	return ret[0].Interface()
+}
+
+// Checks that state objects weren't modified outside of transaction.
+func (rt *Runtime) checkStateObjectsUnmodified() {
+	for obj, expectedKey := range rt.stateUsedObjs { // nolint:nomaprange
+		// Recompute the CID of the object and check it's the same as was recorded
+		// when the object was loaded.
+		finalKey, _, err := ipld.MarshalCBOR(obj)
+		if err != nil {
+			rt.Abortf(exitcode.SysErrorIllegalActor, "error marshalling state object for validation: %v", err)
+		}
+		if finalKey != expectedKey {
+			rt.Abortf(exitcode.SysErrorIllegalActor, "State mutated outside of transaction scope")
+		}
+	}
 }
 
 func (rt *Runtime) verifyExportedMethodType(meth reflect.Value) {
@@ -1087,4 +1128,25 @@ func (rt *Runtime) failTestNow(msg string, args ...interface{}) {
 
 func (rt *Runtime) ChargeGas(_ string, gas, _ int64) {
 	rt.gasCharged += gas
+}
+
+func getMethodName(code cid.Cid, num abi.MethodNum) string {
+	for _, actor := range exported.BuiltinActors() {
+		if actor.Code().Equals(code) {
+			exports := actor.Exports()
+			if len(exports) <= int(num) {
+				return "<invalid>"
+			}
+			meth := exports[num]
+			if meth == nil {
+				return "<invalid>"
+			}
+			name := goruntime.FuncForPC(reflect.ValueOf(meth).Pointer()).Name()
+			name = strings.TrimSuffix(name, "-fm")
+			lastDot := strings.LastIndexByte(name, '.')
+			name = name[lastDot+1:]
+			return name
+		}
+	}
+	return "<unknown actor>"
 }
