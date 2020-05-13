@@ -4,11 +4,11 @@ import (
 	"context"
 
 	"github.com/filecoin-project/go-state-types/cbor"
-	exitcode "github.com/filecoin-project/go-state-types/exitcode"
+	"github.com/filecoin-project/go-state-types/exitcode"
 	cid "github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 
-	vmr "github.com/filecoin-project/specs-actors/actors/runtime"
+	vmr "github.com/filecoin-project/specs-actors/v2/actors/runtime"
 )
 
 // Store defines an interface required to back the ADTs in this package.
