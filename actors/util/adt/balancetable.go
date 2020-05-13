@@ -2,11 +2,10 @@ package adt
 
 import (
 	addr "github.com/filecoin-project/go-address"
-	cid "github.com/ipfs/go-cid"
-	"golang.org/x/xerrors"
-
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
+	cid "github.com/ipfs/go-cid"
+	"golang.org/x/xerrors"
 )
 
 // A specialization of a map of addresses to (positive) token amounts.
