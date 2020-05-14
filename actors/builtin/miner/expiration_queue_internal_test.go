@@ -17,7 +17,7 @@ func TestExpirations(t *testing.T) {
 		testSector(14, 3, 0, 0, 0),
 		testSector(13, 4, 0, 0, 0),
 	}
-	result := groupSectorsByExpiration(2048, sectors, quant)
+	result := groupNewSectorsByDeclaredExpiration(2048, sectors, quant)
 	expected := []*sectorEpochSet{{
 		epoch:   13,
 		sectors: []uint64{1, 2, 4},
@@ -37,7 +37,7 @@ func TestExpirations(t *testing.T) {
 
 func TestExpirationsEmpty(t *testing.T) {
 	sectors := []*SectorOnChainInfo{}
-	result := groupSectorsByExpiration(2048, sectors, NoQuantization)
+	result := groupNewSectorsByDeclaredExpiration(2048, sectors, NoQuantization)
 	expected := []sectorEpochSet{}
 	require.Equal(t, expected, result)
 }
