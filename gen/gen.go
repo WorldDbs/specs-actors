@@ -3,47 +3,46 @@ package main
 import (
 	gen "github.com/whyrusleeping/cbor-gen"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/builtin/account"
-	"github.com/filecoin-project/specs-actors/actors/builtin/cron"
-	init_ "github.com/filecoin-project/specs-actors/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/actors/builtin/paych"
-	"github.com/filecoin-project/specs-actors/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/actors/builtin/system"
-	"github.com/filecoin-project/specs-actors/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/actors/states"
-	"github.com/filecoin-project/specs-actors/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/cron"
+	init_ "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/paych"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/system"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
 )
 
 func main() {
 	// Common types
-	if err := gen.WriteTupleEncodersToFile("./actors/runtime/proof/cbor_gen.go", "proof",
-		proof.SectorInfo{},
-		proof.SealVerifyInfo{},
-		proof.PoStProof{},
-		proof.WindowPoStVerifyInfo{},
-		proof.WinningPoStVerifyInfo{},
-	); err != nil {
-		panic(err)
-	}
+	//if err := gen.WriteTupleEncodersToFile("./actors/runtime/proof/cbor_gen.go", "proof",
+	//proof.SectorInfo{}, // Aliased from v0
+	//proof.SealVerifyInfo{}, // Aliased from v0
+	//proof.PoStProof{}, // Aliased from v0
+	//proof.WindowPoStVerifyInfo{}, // Aliased from v0
+	//proof.WinningPoStVerifyInfo{}, // Aliased from v0
+	//); err != nil {
+	//	panic(err)
+	//}
 
 	if err := gen.WriteTupleEncodersToFile("./actors/builtin/cbor_gen.go", "builtin",
 		builtin.MinerAddrs{},
-		builtin.ConfirmSectorProofsParams{},
+		//builtin.ConfirmSectorProofsParams{},  // Aliased from v0
+		builtin.ApplyRewardParams{},
 	); err != nil {
 		panic(err)
 	}
 
-	if err := gen.WriteTupleEncodersToFile("./actors/states/cbor_gen.go", "states",
-		states.Actor{},
-	); err != nil {
-		panic(err)
-	}
+	// if err := gen.WriteTupleEncodersToFile("./actors/states/cbor_gen.go", "states",
+	// 	states.Actor{},
+	// ); err != nil {
+	// 	panic(err)
+	// }
 
 	// Actors
 	if err := gen.WriteTupleEncodersToFile("./actors/builtin/system/cbor_gen.go", "system",
@@ -63,10 +62,10 @@ func main() {
 	if err := gen.WriteTupleEncodersToFile("./actors/builtin/init/cbor_gen.go", "init",
 		// actor state
 		init_.State{},
-		// method params
-		init_.ConstructorParams{},
-		init_.ExecParams{},
-		init_.ExecReturn{},
+		// method params and returns
+		//init_.ConstructorParams{}, // Aliased from v0
+		//init_.ExecParams{}, // Aliased from v0
+		//init_.ExecReturn{}, // Aliased from v0
 	); err != nil {
 		panic(err)
 	}
@@ -75,8 +74,8 @@ func main() {
 		// actor state
 		cron.State{},
 		cron.Entry{},
-		// method params
-		cron.ConstructorParams{},
+		// method params and returns
+		//cron.ConstructorParams{}, // Aliased from v0
 	); err != nil {
 		panic(err)
 	}
@@ -84,9 +83,8 @@ func main() {
 	if err := gen.WriteTupleEncodersToFile("./actors/builtin/reward/cbor_gen.go", "reward",
 		// actor state
 		reward.State{},
-		// method params
-		reward.AwardBlockRewardParams{},
-		// method returns
+		// method params and returns
+		//reward.AwardBlockRewardParams{}, // Aliased from v0
 		reward.ThisEpochRewardReturn{},
 	); err != nil {
 		panic(err)
@@ -95,20 +93,19 @@ func main() {
 	if err := gen.WriteTupleEncodersToFile("./actors/builtin/multisig/cbor_gen.go", "multisig",
 		// actor state
 		multisig.State{},
-		multisig.Transaction{},
-		multisig.ProposalHashData{},
-		// method params
+		//multisig.Transaction{}, // Aliased from v0
+		//multisig.ProposalHashData{}, // Aliased from v0
+		// method params and returns
 		multisig.ConstructorParams{},
-		multisig.ProposeParams{},
-		multisig.AddSignerParams{},
-		multisig.RemoveSignerParams{},
-		multisig.TxnIDParams{},
-		multisig.ChangeNumApprovalsThresholdParams{},
-		multisig.SwapSignerParams{},
-		multisig.LockBalanceParams{},
-		// method returns
-		multisig.ApproveReturn{},
-		multisig.ProposeReturn{},
+		//multisig.ProposeParams{}, // Aliased from v0
+		//multisig.ProposeReturn{}, // Aliased from v0
+		//multisig.AddSignerParams{}, // Aliased from v0
+		//multisig.RemoveSignerParams{}, // Aliased from v0
+		//multisig.TxnIDParams{}, // Aliased from v0
+		//multisig.ApproveReturn{}, // Aliased from v0
+		//multisig.ChangeNumApprovalsThresholdParams{}, // Aliased from v0
+		//multisig.SwapSignerParams{}, // Aliased from v0
+		//multisig.LockBalanceParams{}, // Aliased from v0
 	); err != nil {
 		panic(err)
 	}
@@ -117,13 +114,13 @@ func main() {
 		// actor state
 		paych.State{},
 		paych.LaneState{},
-		paych.Merge{},
-		// method params
-		paych.ConstructorParams{},
+		// method params and returns
+		//paych.ConstructorParams{}, // Aliased from v0
 		paych.UpdateChannelStateParams{},
-		paych.SignedVoucher{},
-		paych.ModVerifyParams{},
-		paych.PaymentVerifyParams{},
+		//paych.SignedVoucher{}, // Aliased from v0
+		//paych.ModVerifyParams{}, // Aliased from v0
+		// other types
+		//paych.Merge{}, // Aliased from v0
 	); err != nil {
 		panic(err)
 	}
@@ -133,16 +130,14 @@ func main() {
 		power.State{},
 		power.Claim{},
 		power.CronEvent{},
-		// method params
-		power.CreateMinerParams{},
-		power.EnrollCronEventParams{},
-		power.UpdateClaimedPowerParams{},
-		// method returns
-		power.CreateMinerReturn{},
+		// method params and returns
+		//power.CreateMinerParams{}, // Aliased from v0
+		//power.CreateMinerReturn{}, // Aliased from v0
+		//power.EnrollCronEventParams{}, // Aliased from v0
+		//power.UpdateClaimedPowerParams{}, // Aliased from v0
 		power.CurrentTotalPowerReturn{},
 		// other types
 		power.MinerConstructorParams{},
-		power.SectorStorageWeightDesc{},
 	); err != nil {
 		panic(err)
 	}
@@ -150,20 +145,18 @@ func main() {
 	if err := gen.WriteTupleEncodersToFile("./actors/builtin/market/cbor_gen.go", "market",
 		// actor state
 		market.State{},
-
-		// method params
-		market.WithdrawBalanceParams{},
-		market.PublishStorageDealsParams{},
-		market.ActivateDealsParams{},
-		market.VerifyDealsForActivationParams{},
+		// method params and returns
+		//market.WithdrawBalanceParams{}, // Aliased from v0
+		//market.PublishStorageDealsParams{}, // Aliased from v0
+		//market.PublishStorageDealsReturn{}, // Aliased from v0
+		//market.ActivateDealsParams{}, // Aliased from v0
+		//market.VerifyDealsForActivationParams{}, // Aliased from v0
 		market.VerifyDealsForActivationReturn{},
-		market.ComputeDataCommitmentParams{},
-		market.OnMinerSectorsTerminateParams{},
-		// method returns
-		market.PublishStorageDealsReturn{},
+		//market.ComputeDataCommitmentParams{}, // Aliased from v0
+		//market.OnMinerSectorsTerminateParams{}, // Aliased from v0
 		// other types
-		market.DealProposal{},
-		market.ClientDealProposal{},
+		//market.DealProposal{}, // Aliased from v0
+		//market.ClientDealProposal{}, // Aliased from v0
 		market.DealState{},
 	); err != nil {
 		panic(err)
@@ -184,31 +177,31 @@ func main() {
 		miner.WorkerKeyChange{},
 		miner.VestingFunds{},
 		miner.VestingFund{},
-		// method params
-		// miner.ConstructorParams{},
-		miner.SubmitWindowedPoStParams{},
-		miner.TerminateSectorsParams{},
-		miner.TerminateSectorsReturn{},
-		miner.ChangePeerIDParams{},
-		miner.ChangeMultiaddrsParams{},
-		miner.ProveCommitSectorParams{},
-		miner.ChangeWorkerAddressParams{},
-		miner.ExtendSectorExpirationParams{},
-		miner.DeclareFaultsParams{},
-		miner.DeclareFaultsRecoveredParams{},
-		miner.ReportConsensusFaultParams{},
+		// method params and returns
+		// miner.ConstructorParams{}, // in power actor
+		//miner.SubmitWindowedPoStParams{}, // Aliased from v0
+		//miner.TerminateSectorsParams{}, // Aliased from v0
+		//miner.TerminateSectorsReturn{}, // Aliased from v0
+		//miner.ChangePeerIDParams{}, // Aliased from v0
+		//miner.ChangeMultiaddrsParams{}, // Aliased from v0
+		//miner.ProveCommitSectorParams{}, // Aliased from v0
+		//miner.ChangeWorkerAddressParams{},  // Aliased from v0
+		//miner.ExtendSectorExpirationParams{}, // Aliased from v0
+		//miner.DeclareFaultsParams{}, // Aliased from v0
+		//miner.DeclareFaultsRecoveredParams{}, // Aliased from v0
+		//miner.ReportConsensusFaultParams{}, // Aliased from v0
 		miner.GetControlAddressesReturn{},
-		miner.CheckSectorProvenParams{},
-		miner.WithdrawBalanceParams{},
-		miner.CompactPartitionsParams{},
-		miner.CompactSectorNumbersParams{},
+		//miner.CheckSectorProvenParams{}, // Aliased from v0
+		//miner.WithdrawBalanceParams{}, // Aliased from v0
+		//miner.CompactPartitionsParams{}, // Aliased from v0
+		//miner.CompactSectorNumbersParams{}, // Aliased from v0
+		//miner.CronEventPayload{}, // Aliased from v0
 		// other types
-		miner.CronEventPayload{},
-		miner.FaultDeclaration{},
-		miner.RecoveryDeclaration{},
-		miner.ExpirationExtension{},
-		miner.TerminationDeclaration{},
-		miner.PoStPartition{},
+		//miner.FaultDeclaration{}, // Aliased from v0
+		//miner.RecoveryDeclaration{}, // Aliased from v0
+		//miner.ExpirationExtension{}, // Aliased from v0
+		//miner.TerminationDeclaration{}, // Aliased from v0
+		//miner.PoStPartition{}, // Aliased from v0
 	); err != nil {
 		panic(err)
 	}
@@ -216,11 +209,11 @@ func main() {
 	if err := gen.WriteTupleEncodersToFile("./actors/builtin/verifreg/cbor_gen.go", "verifreg",
 		// actor state
 		verifreg.State{},
-		// method params
-		verifreg.AddVerifierParams{},
-		verifreg.AddVerifiedClientParams{},
-		verifreg.UseBytesParams{},
-		verifreg.RestoreBytesParams{},
+		// method params and returns
+		//verifreg.AddVerifierParams{}, // Aliased from v0
+		//verifreg.AddVerifiedClientParams{}, // Aliased from v0
+		//verifreg.UseBytesParams{}, // Aliased from v0
+		//verifreg.RestoreBytesParams{}, // Aliased from v0
 		// other types
 	); err != nil {
 		panic(err)
