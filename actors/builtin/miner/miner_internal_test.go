@@ -5,13 +5,12 @@ import (
 
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/go-state-types/network"
 	"github.com/minio/blake2b-simd"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
-	"github.com/filecoin-project/specs-actors/actors/util/smoothing"
-	tutils "github.com/filecoin-project/specs-actors/support/testing"
+	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
+	tutils "github.com/filecoin-project/specs-actors/v2/support/testing"
 )
 
 func TestAssignProvingPeriodBoundary(t *testing.T) {
@@ -41,56 +40,57 @@ func TestAssignProvingPeriodBoundary(t *testing.T) {
 	}
 }
 
-func TestNextProvingPeriodStart(t *testing.T) {
+func TestCurrentProvingPeriodStart(t *testing.T) {
 	// At epoch zero...
 	curr := e(0)
-	// ... with offset zero, the first period start skips one period ahead, ...
-	assert.Equal(t, WPoStProvingPeriod, nextProvingPeriodStart(curr, 0))
 
-	// ... and all non-zero offsets are simple.
-	assert.Equal(t, e(1), nextProvingPeriodStart(curr, 1))
-	assert.Equal(t, e(10), nextProvingPeriodStart(curr, 10))
-	assert.Equal(t, WPoStProvingPeriod-1, nextProvingPeriodStart(curr, WPoStProvingPeriod-1))
+	// ... with offset zero, the current proving period starts now, ...
+	assert.Equal(t, e(0), currentProvingPeriodStart(curr, 0))
 
-	// At epoch 1, offsets 0 and 1 start a long way forward, but offsets 2 and later start soon.
+	// ... and all other offsets are negative.
+	assert.Equal(t, -WPoStProvingPeriod+1, currentProvingPeriodStart(curr, 1))
+	assert.Equal(t, -WPoStProvingPeriod+10, currentProvingPeriodStart(curr, 10))
+	assert.Equal(t, e(-1), currentProvingPeriodStart(curr, WPoStProvingPeriod-1))
+
+	// At epoch 1, offsets 0 and 1 start at offset, but offsets 2 and later start in the past.
 	curr = 1
-	assert.Equal(t, WPoStProvingPeriod, nextProvingPeriodStart(curr, 0))
-	assert.Equal(t, WPoStProvingPeriod+1, nextProvingPeriodStart(curr, 1))
-	assert.Equal(t, e(2), nextProvingPeriodStart(curr, 2))
-	assert.Equal(t, e(3), nextProvingPeriodStart(curr, 3))
-	assert.Equal(t, WPoStProvingPeriod-1, nextProvingPeriodStart(curr, WPoStProvingPeriod-1))
+	assert.Equal(t, e(0), currentProvingPeriodStart(curr, 0))
+	assert.Equal(t, e(1), currentProvingPeriodStart(curr, 1))
+	assert.Equal(t, -WPoStProvingPeriod+2, currentProvingPeriodStart(curr, 2))
+	assert.Equal(t, -WPoStProvingPeriod+3, currentProvingPeriodStart(curr, 3))
+	assert.Equal(t, e(-1), currentProvingPeriodStart(curr, WPoStProvingPeriod-1))
 
 	// An arbitrary mid-period epoch.
 	curr = 123
-	assert.Equal(t, WPoStProvingPeriod, nextProvingPeriodStart(curr, 0))
-	assert.Equal(t, WPoStProvingPeriod+1, nextProvingPeriodStart(curr, 1))
-	assert.Equal(t, WPoStProvingPeriod+122, nextProvingPeriodStart(curr, 122))
-	assert.Equal(t, WPoStProvingPeriod+123, nextProvingPeriodStart(curr, 123))
-	assert.Equal(t, e(124), nextProvingPeriodStart(curr, 124))
-	assert.Equal(t, WPoStProvingPeriod-1, nextProvingPeriodStart(curr, WPoStProvingPeriod-1))
+	assert.Equal(t, e(0), currentProvingPeriodStart(curr, 0))
+	assert.Equal(t, e(1), currentProvingPeriodStart(curr, 1))
+	assert.Equal(t, e(122), currentProvingPeriodStart(curr, 122))
+	assert.Equal(t, e(123), currentProvingPeriodStart(curr, 123))
+	assert.Equal(t, -WPoStProvingPeriod+124, currentProvingPeriodStart(curr, 124))
+	assert.Equal(t, e(-1), currentProvingPeriodStart(curr, WPoStProvingPeriod-1))
 
 	// The final epoch in the chain's first full period
 	curr = WPoStProvingPeriod - 1
-	assert.Equal(t, WPoStProvingPeriod, nextProvingPeriodStart(curr, 0))
-	assert.Equal(t, WPoStProvingPeriod+1, nextProvingPeriodStart(curr, 1))
-	assert.Equal(t, WPoStProvingPeriod+2, nextProvingPeriodStart(curr, 2))
-	assert.Equal(t, WPoStProvingPeriod+WPoStProvingPeriod-2, nextProvingPeriodStart(curr, WPoStProvingPeriod-2))
-	assert.Equal(t, WPoStProvingPeriod+WPoStProvingPeriod-1, nextProvingPeriodStart(curr, WPoStProvingPeriod-1))
+	assert.Equal(t, e(0), currentProvingPeriodStart(curr, 0))
+	assert.Equal(t, e(1), currentProvingPeriodStart(curr, 1))
+	assert.Equal(t, e(2), currentProvingPeriodStart(curr, 2))
+	assert.Equal(t, WPoStProvingPeriod-2, currentProvingPeriodStart(curr, WPoStProvingPeriod-2))
+	assert.Equal(t, WPoStProvingPeriod-1, currentProvingPeriodStart(curr, WPoStProvingPeriod-1))
 
 	// Into the chain's second period
 	curr = WPoStProvingPeriod
-	assert.Equal(t, 2*WPoStProvingPeriod, nextProvingPeriodStart(curr, 0))
-	assert.Equal(t, WPoStProvingPeriod+1, nextProvingPeriodStart(curr, 1))
-	assert.Equal(t, WPoStProvingPeriod+2, nextProvingPeriodStart(curr, 2))
-	assert.Equal(t, WPoStProvingPeriod+WPoStProvingPeriod-1, nextProvingPeriodStart(curr, WPoStProvingPeriod-1))
+	assert.Equal(t, WPoStProvingPeriod, currentProvingPeriodStart(curr, 0))
+	assert.Equal(t, e(1), currentProvingPeriodStart(curr, 1))
+	assert.Equal(t, e(2), currentProvingPeriodStart(curr, 2))
+	assert.Equal(t, WPoStProvingPeriod-1, currentProvingPeriodStart(curr, WPoStProvingPeriod-1))
 
 	curr = WPoStProvingPeriod + 234
-	assert.Equal(t, 2*WPoStProvingPeriod, nextProvingPeriodStart(curr, 0))
-	assert.Equal(t, 2*WPoStProvingPeriod+1, nextProvingPeriodStart(curr, 1))
-	assert.Equal(t, 2*WPoStProvingPeriod+233, nextProvingPeriodStart(curr, 233))
-	assert.Equal(t, 2*WPoStProvingPeriod+234, nextProvingPeriodStart(curr, 234))
-	assert.Equal(t, WPoStProvingPeriod+235, nextProvingPeriodStart(curr, 235))
-	assert.Equal(t, WPoStProvingPeriod+WPoStProvingPeriod-1, nextProvingPeriodStart(curr, WPoStProvingPeriod-1))
+	assert.Equal(t, WPoStProvingPeriod, currentProvingPeriodStart(curr, 0))
+	assert.Equal(t, WPoStProvingPeriod+1, currentProvingPeriodStart(curr, 1))
+	assert.Equal(t, WPoStProvingPeriod+233, currentProvingPeriodStart(curr, 233))
+	assert.Equal(t, WPoStProvingPeriod+234, currentProvingPeriodStart(curr, 234))
+	assert.Equal(t, e(235), currentProvingPeriodStart(curr, 235))
+	assert.Equal(t, WPoStProvingPeriod-1, currentProvingPeriodStart(curr, WPoStProvingPeriod-1))
 }
 
 type e = abi.ChainEpoch
@@ -98,23 +98,14 @@ type e = abi.ChainEpoch
 func TestFaultFeeInvariants(t *testing.T) {
 
 	// Construct plausible reward and qa power filtered estimates
-	nv := network.Version0
 	epochReward := abi.NewTokenAmount(100 << 53)
 	rewardEstimate := smoothing.TestingConstantEstimate(epochReward) // not too much growth over ~3000 epoch projection in BR
 
 	networkPower := abi.NewStoragePower(100 << 50)
 	powerEstimate := smoothing.TestingConstantEstimate(networkPower)
 
-	t.Run("Undeclared faults are more expensive than declared faults", func(t *testing.T) {
-		faultySectorPower := abi.NewStoragePower(1 << 50)
-
-		ff := PledgePenaltyForDeclaredFault(rewardEstimate, powerEstimate, faultySectorPower, nv)
-		sp := PledgePenaltyForUndeclaredFault(rewardEstimate, powerEstimate, faultySectorPower, nv)
-		assert.True(t, sp.GreaterThan(ff))
-	})
-
 	// constant filter estimate cumsum ratio is just multiplication and division
-	// test that internal precision of BR calculation does not cost accuracy 
+	// test that internal precision of BR calculation does not cost accuracy
 	// compared to simple multiplication in this case.
 	t.Run("br looks right in plausible (sectorPower, networkPower, reward) range", func(t *testing.T) {
 		// between 10 and 100 FIL is reasonable for near-mid future
@@ -145,7 +136,7 @@ func TestFaultFeeInvariants(t *testing.T) {
 		assert.Equal(t, big.Div(smallPowerBRNum, hundredsOfEiBs), brSmallMid)
 		assert.Equal(t, big.Div(hugePowerBRNum, hundredsOfEiBs), brHugeMid)
 
-		// 1000s of EiBs -- upper range 
+		// 1000s of EiBs -- upper range
 		// 1.2e18 * 1000 bytes * 10 quality = 1.2e22 ~ 2e22
 		thousandsOfEiBs := big.Mul(abi.NewStoragePower(1e18), big.NewInt(2e4))
 		upperPowerEstimate := smoothing.TestingConstantEstimate(thousandsOfEiBs)
@@ -163,11 +154,11 @@ func TestFaultFeeInvariants(t *testing.T) {
 		totalFaultPower := big.Add(big.Add(faultySectorAPower, faultySectorBPower), faultySectorCPower)
 
 		// Declared faults
-		ffA := PledgePenaltyForDeclaredFault(rewardEstimate, powerEstimate, faultySectorAPower, nv)
-		ffB := PledgePenaltyForDeclaredFault(rewardEstimate, powerEstimate, faultySectorBPower, nv)
-		ffC := PledgePenaltyForDeclaredFault(rewardEstimate, powerEstimate, faultySectorCPower, nv)
+		ffA := PledgePenaltyForContinuedFault(rewardEstimate, powerEstimate, faultySectorAPower)
+		ffB := PledgePenaltyForContinuedFault(rewardEstimate, powerEstimate, faultySectorBPower)
+		ffC := PledgePenaltyForContinuedFault(rewardEstimate, powerEstimate, faultySectorCPower)
 
-		ffAll := PledgePenaltyForDeclaredFault(rewardEstimate, powerEstimate, totalFaultPower, nv)
+		ffAll := PledgePenaltyForContinuedFault(rewardEstimate, powerEstimate, totalFaultPower)
 
 		// Because we can introduce rounding error between 1 and zero for every penalty calculation
 		// we can at best expect n calculations of 1 power to be within n of 1 calculation of n powers.
@@ -176,11 +167,11 @@ func TestFaultFeeInvariants(t *testing.T) {
 		assert.True(t, diff.LessThan(big.NewInt(3)))
 
 		// Undeclared faults
-		spA := PledgePenaltyForUndeclaredFault(rewardEstimate, powerEstimate, faultySectorAPower, nv)
-		spB := PledgePenaltyForUndeclaredFault(rewardEstimate, powerEstimate, faultySectorBPower, nv)
-		spC := PledgePenaltyForUndeclaredFault(rewardEstimate, powerEstimate, faultySectorCPower, nv)
+		spA := PledgePenaltyForTerminationLowerBound(rewardEstimate, powerEstimate, faultySectorAPower)
+		spB := PledgePenaltyForTerminationLowerBound(rewardEstimate, powerEstimate, faultySectorBPower)
+		spC := PledgePenaltyForTerminationLowerBound(rewardEstimate, powerEstimate, faultySectorCPower)
 
-		spAll := PledgePenaltyForUndeclaredFault(rewardEstimate, powerEstimate, totalFaultPower, nv)
+		spAll := PledgePenaltyForTerminationLowerBound(rewardEstimate, powerEstimate, totalFaultPower)
 
 		// Because we can introduce rounding error between 1 and zero for every penalty calculation
 		// we can at best expect n calculations of 1 power to be within n of 1 calculation of n powers.
