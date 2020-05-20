@@ -5,21 +5,21 @@ import (
 	"fmt"
 
 	"github.com/filecoin-project/go-address"
-	hamt "github.com/filecoin-project/go-hamt-ipld/v2"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/filecoin-project/go-state-types/network"
 	"github.com/filecoin-project/go-state-types/rt"
+	vm2 "github.com/filecoin-project/specs-actors/v2/support/vm"
 	"github.com/ipfs/go-cid"
 	"github.com/pkg/errors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	init_ "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v2/actors/states"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	init_ "github.com/filecoin-project/specs-actors/v3/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v3/actors/states"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 // VM is a simplified message execution framework for the purposes of testing inter-actor communication.
@@ -53,7 +53,8 @@ type VM struct {
 
 // VM types
 
-type ActorImplLookup map[cid.Cid]runtime.VMActor
+// type ActorImplLookup map[cid.Cid]runtime.VMActor
+type ActorImplLookup vm2.ActorImplLookup
 
 type InternalMessage struct {
 	from   address.Address
@@ -72,7 +73,10 @@ type Invocation struct {
 
 // NewVM creates a new runtime for executing messages.
 func NewVM(ctx context.Context, actorImpls ActorImplLookup, store adt.Store) *VM {
-	actors := adt.MakeEmptyMap(store)
+	actors, err := adt.MakeEmptyMap(store, builtin.DefaultHamtBitwidth)
+	if err != nil {
+		panic(err)
+	}
 	actorRoot, err := actors.Root()
 	if err != nil {
 		panic(err)
@@ -99,7 +103,7 @@ func NewVM(ctx context.Context, actorImpls ActorImplLookup, store adt.Store) *VM
 
 // NewVM creates a new runtime for executing messages.
 func NewVMAtEpoch(ctx context.Context, actorImpls ActorImplLookup, store adt.Store, stateRoot cid.Cid, epoch abi.ChainEpoch) (*VM, error) {
-	actors, err := adt.AsMap(store, stateRoot)
+	actors, err := adt.AsMap(store, stateRoot, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +134,7 @@ func (vm *VM) WithEpoch(epoch abi.ChainEpoch) (*VM, error) {
 		return nil, err
 	}
 
-	actors, err := adt.AsMap(vm.store, vm.stateRoot)
+	actors, err := adt.AsMap(vm.store, vm.stateRoot, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +161,7 @@ func (vm *VM) WithNetworkVersion(nv network.Version) (*VM, error) {
 		return nil, err
 	}
 
-	actors, err := adt.AsMap(vm.store, vm.stateRoot)
+	actors, err := adt.AsMap(vm.store, vm.stateRoot, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +184,7 @@ func (vm *VM) WithNetworkVersion(nv network.Version) (*VM, error) {
 
 func (vm *VM) rollback(root cid.Cid) error {
 	var err error
-	vm.actors, err = adt.AsMap(vm.store, root)
+	vm.actors, err = adt.AsMap(vm.store, root, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load node for %s", root)
 	}
@@ -235,11 +239,8 @@ func (vm *VM) SetActorState(ctx context.Context, key address.Address, state cbor
 // This behaviour is based on a principle that some store implementations might not be able to determine
 // whether something exists before deleting it.
 func (vm *VM) deleteActor(_ context.Context, key address.Address) error {
-	err := vm.actors.Delete(abi.AddrKey(key))
-	vm.actorsDirty = true
-	if err == hamt.ErrNotFound {
-		return nil
-	}
+	found, err := vm.actors.TryDelete(abi.AddrKey(key))
+	vm.actorsDirty = found
 	return err
 }
 
@@ -359,6 +360,7 @@ func (vm *VM) ApplyMessage(from, to address.Address, value abi.TokenAmount, meth
 		if _, err := vm.checkpoint(); err != nil {
 			panic(err)
 		}
+
 	}
 
 	return ret.inner, exitCode
