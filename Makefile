@@ -8,11 +8,11 @@ build:
 
 test:
 	$(GO_BIN) test ./...
-	$(GO_BIN) test -race ./actors/migration/nv4/test
+	$(GO_BIN) test -race ./actors/migration/nv10/test
 .PHONY: test
 
 test-migration:
-	$(GO_BIN) test -race ./actors/migration/nv4/test
+	$(GO_BIN) test -race ./actors/migration/nv10/test
 .PHONY: test-migration
 
 test-coverage:
