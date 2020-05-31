@@ -13,16 +13,27 @@ import (
 
 // Build for fluent initialization of a mock runtime.
 type RuntimeBuilder struct {
-	rt *Runtime
+	options []func(rt *Runtime)
 }
 
 // Initializes a new builder with a receiving actor address.
-func NewBuilder(ctx context.Context, receiver addr.Address) *RuntimeBuilder {
+func NewBuilder(receiver addr.Address) RuntimeBuilder {
+	var b RuntimeBuilder
+	b.add(func(rt *Runtime) {
+		rt.receiver = receiver
+	})
+	return b
+}
+
+// Builds a new runtime object with the configured values.
+func (b RuntimeBuilder) Build(t testing.TB) *Runtime {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	m := &Runtime{
 		ctx:               ctx,
 		epoch:             0,
 		networkVersion:    network.VersionMax,
-		receiver:          receiver,
 		caller:            addr.Address{},
 		callerType:        cid.Undef,
 		miner:             addr.Address{},
@@ -39,7 +50,7 @@ func NewBuilder(ctx context.Context, receiver addr.Address) *RuntimeBuilder {
 		actorCodeCIDs: make(map[addr.Address]cid.Cid),
 		newActorAddr:  addr.Undef,
 
-		t:                        nil, // Initialized at Build()
+		t:                        t,
 		expectValidateCallerAny:  false,
 		expectValidateCallerAddr: nil,
 		expectValidateCallerType: nil,
@@ -48,56 +59,63 @@ func NewBuilder(ctx context.Context, receiver addr.Address) *RuntimeBuilder {
 		expectSends:      make([]*expectedMessage, 0),
 		expectVerifySigs: make([]*expectVerifySig, 0),
 	}
-	return &RuntimeBuilder{m}
-}
-
-// Builds a new runtime object with the configured values.
-func (b *RuntimeBuilder) Build(t testing.TB) *Runtime {
-	cpy := *b.rt
-
-	// Deep copy the mutable values.
-	cpy.store = make(map[cid.Cid][]byte)
-	for k, v := range b.rt.store { //nolint:nomaprange
-		cpy.store[k] = v
+	for _, opt := range b.options {
+		opt(m)
 	}
-
-	cpy.t = t
-	return &cpy
+	return m
 }
 
-func (b *RuntimeBuilder) WithEpoch(epoch abi.ChainEpoch) *RuntimeBuilder {
-	b.rt.epoch = epoch
+func (b *RuntimeBuilder) add(cb func(*Runtime)) {
+	b.options = append(b.options, cb)
+}
+
+func (b RuntimeBuilder) WithEpoch(epoch abi.ChainEpoch) RuntimeBuilder {
+	b.add(func(rt *Runtime) {
+		rt.epoch = epoch
+	})
 	return b
 }
 
-func (b *RuntimeBuilder) WithCaller(address addr.Address, code cid.Cid) *RuntimeBuilder {
-	b.rt.caller = address
-	b.rt.callerType = code
+func (b RuntimeBuilder) WithCaller(address addr.Address, code cid.Cid) RuntimeBuilder {
+	b.add(func(rt *Runtime) {
+		rt.caller = address
+		rt.callerType = code
+	})
 	return b
 }
 
-func (b *RuntimeBuilder) WithMiner(miner addr.Address) *RuntimeBuilder {
-	b.rt.miner = miner
+func (b RuntimeBuilder) WithMiner(miner addr.Address) RuntimeBuilder {
+	b.add(func(rt *Runtime) {
+		rt.miner = miner
+	})
 	return b
 }
 
-func (b *RuntimeBuilder) WithBalance(balance, received abi.TokenAmount) *RuntimeBuilder {
-	b.rt.balance = balance
-	b.rt.valueReceived = received
+func (b RuntimeBuilder) WithBalance(balance, received abi.TokenAmount) RuntimeBuilder {
+	b.add(func(rt *Runtime) {
+		rt.balance = balance
+		rt.valueReceived = received
+	})
 	return b
 }
 
-func (b *RuntimeBuilder) WithNetworkVersion(version network.Version) *RuntimeBuilder {
-	b.rt.networkVersion = version
+func (b RuntimeBuilder) WithNetworkVersion(version network.Version) RuntimeBuilder {
+	b.add(func(rt *Runtime) {
+		rt.networkVersion = version
+	})
 	return b
 }
 
-func (b *RuntimeBuilder) WithActorType(addr addr.Address, code cid.Cid) *RuntimeBuilder {
-	b.rt.actorCodeCIDs[addr] = code
+func (b RuntimeBuilder) WithActorType(addr addr.Address, code cid.Cid) RuntimeBuilder {
+	b.add(func(rt *Runtime) {
+		rt.actorCodeCIDs[addr] = code
+	})
 	return b
 }
 
-func (b *RuntimeBuilder) WithHasher(f func(data []byte) [32]byte) *RuntimeBuilder {
-	b.rt.hashfunc = f
+func (b RuntimeBuilder) WithHasher(f func(data []byte) [32]byte) RuntimeBuilder {
+	b.add(func(rt *Runtime) {
+		rt.hashfunc = f
+	})
 	return b
 }
