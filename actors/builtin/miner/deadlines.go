@@ -7,7 +7,7 @@ import (
 	"github.com/filecoin-project/go-state-types/dline"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 // Returns deadline-related calculations for a deadline in some proving period and the current epoch.
@@ -28,7 +28,7 @@ func FindSector(store adt.Store, deadlines *Deadlines, sectorNum abi.SectorNumbe
 			return 0, 0, err
 		}
 
-		partitions, err := adt.AsArray(store, dl.Partitions)
+		partitions, err := adt.AsArray(store, dl.Partitions, DeadlinePartitionsAmtBitwidth)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -57,7 +57,8 @@ func FindSector(store adt.Store, deadlines *Deadlines, sectorNum abi.SectorNumbe
 	return 0, 0, xerrors.Errorf("sector %d not due at any deadline", sectorNum)
 }
 
-// Returns true if the deadline at the given index is currently mutable.
+// Returns true if the deadline at the given index is currently mutable. A
+// "mutable" deadline may have new sectors assigned to it.
 func deadlineIsMutable(provingPeriodStart abi.ChainEpoch, dlIdx uint64, currentEpoch abi.ChainEpoch) bool {
 	// Get the next non-elapsed deadline (i.e., the next time we care about
 	// mutations to the deadline).
@@ -65,4 +66,31 @@ func deadlineIsMutable(provingPeriodStart abi.ChainEpoch, dlIdx uint64, currentE
 	// Ensure that the current epoch is at least one challenge window before
 	// that deadline opens.
 	return currentEpoch < dlInfo.Open-WPoStChallengeWindow
+}
+
+// Returns true if optimistically accepted posts submitted to the given deadline
+// may be disputed. Specifically, this ensures that:
+//
+// 1. Optimistic PoSts may not be disputed while the challenge window is open.
+// 2. Optimistic PoSts may not be disputed after the miner could have compacted the deadline.
+func deadlineAvailableForOptimisticPoStDispute(provingPeriodStart abi.ChainEpoch, dlIdx uint64, currentEpoch abi.ChainEpoch) bool {
+	if provingPeriodStart > currentEpoch {
+		// We haven't started proving yet, there's nothing to dispute.
+		return false
+	}
+	dlInfo := NewDeadlineInfo(provingPeriodStart, dlIdx, currentEpoch).NextNotElapsed()
+
+	return !dlInfo.IsOpen() && currentEpoch < (dlInfo.Close-WPoStProvingPeriod)+WPoStDisputeWindow
+}
+
+// Returns true if the given deadline may compacted in the current epoch.
+// Deadlines may not be compacted when:
+//
+// 1. The deadline is currently being challenged.
+// 2. The deadline is to be challenged next.
+// 3. Optimistically accepted posts from the deadline's last challenge window
+//    can currently be disputed.
+func deadlineAvailableForCompaction(provingPeriodStart abi.ChainEpoch, dlIdx uint64, currentEpoch abi.ChainEpoch) bool {
+	return deadlineIsMutable(provingPeriodStart, dlIdx, currentEpoch) &&
+		!deadlineAvailableForOptimisticPoStDispute(provingPeriodStart, dlIdx, currentEpoch)
 }
