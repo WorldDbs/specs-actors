@@ -1,14 +1,16 @@
 package agent
 
 import (
-	"github.com/pkg/errors"
 	"math/rand"
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/cbor"
+	"github.com/pkg/errors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	power2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
+	power3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
 )
 
 // MinerGenerator adds miner agents to the simulation at a configured rate.
@@ -34,7 +36,7 @@ func NewMinerGenerator(accounts []address.Address, config MinerAgentConfig, crea
 	}
 }
 
-func (mg *MinerGenerator) Tick(_ SimState) ([]message, error) {
+func (mg *MinerGenerator) Tick(s SimState) ([]message, error) {
 	var msgs []message
 	if mg.minersCreated >= len(mg.accounts) {
 		return msgs, nil
@@ -44,40 +46,53 @@ func (mg *MinerGenerator) Tick(_ SimState) ([]message, error) {
 		if mg.minersCreated < len(mg.accounts) {
 			addr := mg.accounts[mg.minersCreated]
 			mg.minersCreated++
-			msgs = append(msgs, mg.createMiner(addr, mg.config))
+			msg, err := mg.createMiner(addr, mg.config, s)
+			if err != nil {
+				return err
+			}
+			msgs = append(msgs, msg)
 		}
 		return nil
 	})
 	return msgs, err
 }
 
-func (mg *MinerGenerator) createMiner(owner address.Address, cfg MinerAgentConfig) message {
+func (mg *MinerGenerator) createMiner(owner address.Address, cfg MinerAgentConfig, s SimState) (message, error) {
+	params, err := s.CreateMinerParams(owner, owner, cfg.ProofType)
+	if err != nil {
+		return message{}, err
+	}
 	return message{
 		From:   owner,
 		To:     builtin.StoragePowerActorAddr,
 		Value:  mg.config.StartingBalance, // miner gets all account funds
 		Method: builtin.MethodsPower.CreateMiner,
-		Params: &power.CreateMinerParams{
-			Owner:         owner,
-			Worker:        owner,
-			SealProofType: cfg.ProofType,
-		},
+		Params: params,
 		ReturnHandler: func(s SimState, msg message, ret cbor.Marshaler) error {
 			createMinerRet, ok := ret.(*power.CreateMinerReturn)
 			if !ok {
 				return errors.Errorf("create miner return has wrong type: %v", ret)
 			}
 
-			params := msg.Params.(*power.CreateMinerParams)
-			if !ok {
-				return errors.Errorf("create miner params has wrong type: %v", msg.Params)
+			var worker, owner address.Address
+			params, okV3 := msg.Params.(*power3.CreateMinerParams)
+			if !okV3 {
+				params, okV2 := msg.Params.(*power2.CreateMinerParams)
+				if !okV2 {
+					return errors.Errorf("create miner params has wrong type: %v", msg.Params)
+				}
+				worker = params.Worker
+				owner = params.Owner
+			} else {
+				worker = params.Worker
+				owner = params.Owner
 			}
 
 			// register agent as both a miner and deal provider
-			minerAgent := NewMinerAgent(params.Owner, params.Worker, createMinerRet.IDAddress, createMinerRet.RobustAddress, mg.rnd.Int63(), cfg)
+			minerAgent := NewMinerAgent(owner, worker, createMinerRet.IDAddress, createMinerRet.RobustAddress, mg.rnd.Int63(), cfg)
 			s.AddAgent(minerAgent)
 			s.AddDealProvider(minerAgent)
 			return nil
 		},
-	}
+	}, nil
 }
