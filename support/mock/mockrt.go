@@ -21,12 +21,12 @@ import (
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/exported"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/ipld"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/exported"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/ipld"
 )
 
 // A mock runtime for unit testing of actors in isolation.
@@ -942,6 +942,10 @@ func (rt *Runtime) Verify() {
 		rt.failTest("missing expected ComputeUnsealedSectorCID with %v", rt.expectComputeUnsealedSectorCID)
 	}
 
+	if rt.expectVerifyPoSt != nil {
+		rt.failTest("missing expected PoSt verification with %v", rt.expectVerifyPoSt)
+	}
+
 	if rt.expectVerifyConsensusFault != nil {
 		rt.failTest("missing expected verify consensus fault")
 	}
@@ -995,34 +999,6 @@ func (rt *Runtime) ExpectAbortContainsMessage(expected exitcode.ExitCode, substr
 			if !strings.Contains(a.msg, substr) {
 				rt.failTest("abort expected message\n'%s'\nto contain\n'%s'\n", a.msg, substr)
 			}
-		}
-		// Roll back state change.
-		rt.state = prevState
-	}()
-	f()
-}
-
-func (rt *Runtime) ExpectAssertionFailure(expected string, f func()) {
-	rt.t.Helper()
-	prevState := rt.state
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			rt.failTest("expected panic with message %v but call succeeded", expected)
-			return
-		}
-		a, ok := r.(abort)
-		if ok {
-			rt.failTest("expected panic with message %v but got abort %v", expected, a)
-			return
-		}
-		p, ok := r.(string)
-		if !ok {
-			panic(r)
-		}
-		if p != expected {
-			rt.failTest("expected panic with message \"%v\" but got message \"%v\"", expected, p)
 		}
 		// Roll back state change.
 		rt.state = prevState
