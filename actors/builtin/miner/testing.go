@@ -6,9 +6,9 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/util"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type DealSummary struct {
@@ -17,11 +17,11 @@ type DealSummary struct {
 }
 
 type StateSummary struct {
-	LivePower     PowerPair
-	ActivePower   PowerPair
-	FaultyPower   PowerPair
-	Deals         map[abi.DealID]DealSummary
-	SealProofType abi.RegisteredSealProof
+	LivePower           PowerPair
+	ActivePower         PowerPair
+	FaultyPower         PowerPair
+	Deals               map[abi.DealID]DealSummary
+	WindowPoStProofType abi.RegisteredPoStProof
 }
 
 // Checks internal invariants of init state.
@@ -29,10 +29,10 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount) (
 	acc := &builtin.MessageAccumulator{}
 	sectorSize := abi.SectorSize(0)
 	minerSummary := &StateSummary{
-		LivePower:     NewPowerPairZero(),
-		ActivePower:   NewPowerPairZero(),
-		FaultyPower:   NewPowerPairZero(),
-		SealProofType: 0,
+		LivePower:           NewPowerPairZero(),
+		ActivePower:         NewPowerPairZero(),
+		FaultyPower:         NewPowerPairZero(),
+		WindowPoStProofType: 0,
 	}
 
 	// Load data from linked structures.
@@ -41,7 +41,7 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount) (
 		// Stop here, it's too hard to make other useful checks.
 		return minerSummary, acc
 	} else {
-		minerSummary.SealProofType = info.SealProofType
+		minerSummary.WindowPoStProofType = info.WindowPoStProofType
 		sectorSize = info.SectorSize
 		CheckMinerInfo(info, acc)
 	}
@@ -64,7 +64,7 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount) (
 
 	minerSummary.Deals = map[abi.DealID]DealSummary{}
 	var allSectors map[abi.SectorNumber]*SectorOnChainInfo
-	if sectorsArr, err := adt.AsArray(store, st.Sectors); err != nil {
+	if sectorsArr, err := adt.AsArray(store, st.Sectors, SectorsAmtBitwidth); err != nil {
 		acc.Addf("error loading sectors")
 	} else {
 		allSectors = map[abi.SectorNumber]*SectorOnChainInfo{}
@@ -201,14 +201,58 @@ func CheckDeadlineStateInvariants(deadline *Deadline, store adt.Store, quant Qua
 	})
 	acc.RequireNoError(err, "error iterating partitions")
 
-	// Check PoSt submissions
-	if postSubmissions, err := deadline.PostSubmissions.All(1 << 20); err != nil {
-		acc.Addf("error expanding post submissions: %v", err)
-	} else {
-		for _, p := range postSubmissions {
-			acc.Require(p <= partitionCount, "invalid PoSt submission for partition %d of %d", p, partitionCount)
+	// Check invariants on partitions proven.
+	{
+		if lastProof, err := deadline.PartitionsPoSted.Last(); err != nil {
+			if err != bitfield.ErrNoBitsSet {
+				acc.Addf("error determining the last partition proven: %v", err)
+			}
+		} else {
+			acc.Require(partitionCount >= (lastProof+1), "expected at least %d partitions, found %d", lastProof+1, partitionCount)
+			acc.Require(deadline.LiveSectors > 0, "expected at least one live sector when partitions have been proven")
 		}
 	}
+
+	// Check partitions snapshot to make sure we take the snapshot after
+	// dealing with recovering power and unproven power.
+	partitionsSnapshot, err := deadline.PartitionsSnapshotArray(store)
+	acc.RequireNoError(err, "error loading partitions snapshot")
+	err = partitionsSnapshot.ForEach(&partition, func(i int64) error {
+		acc := acc.WithPrefix("partition snapshot %d: ", i) // Shadow
+
+		acc.Require(partition.RecoveringPower.IsZero(), "snapshot partition has recovering power")
+		if noRecoveries, err := partition.Recoveries.IsEmpty(); err != nil {
+			acc.Addf("error counting recoveries: %v", err)
+		} else {
+			acc.Require(noRecoveries, "snapshot partition has pending recoveries")
+		}
+
+		acc.Require(partition.UnprovenPower.IsZero(), "snapshot partition has unproven power")
+		if noUnproven, err := partition.Unproven.IsEmpty(); err != nil {
+			acc.Addf("error counting unproven: %v", err)
+		} else {
+			acc.Require(noUnproven, "snapshot partition has unproven sectors")
+		}
+
+		return nil
+	})
+	acc.RequireNoError(err, "error iterating partitions snapshot")
+
+	// Check that we don't have any proofs proving partitions that are not in the snapshot.
+	proofsSnapshot, err := deadline.OptimisticProofsSnapshotArray(store)
+	acc.RequireNoError(err, "error loading proofs snapshot")
+	var proof WindowedPoSt
+	err = proofsSnapshot.ForEach(&proof, func(_ int64) error {
+		err = proof.Partitions.ForEach(func(i uint64) error {
+			found, err := partitionsSnapshot.Get(i, &partition)
+			acc.RequireNoError(err, "error loading partition snapshot")
+			acc.Require(found, "failed to find partition for recorded proof in the snapshot")
+			return nil
+		})
+		acc.RequireNoError(err, "error iterating proof partitions bitfield")
+		return nil
+	})
+	acc.RequireNoError(err, "error iterating proofs snapshot")
 
 	// Check memoized sector and power values.
 	live, err := bitfield.MultiMerge(allLiveSectors...)
@@ -255,7 +299,7 @@ func CheckDeadlineStateInvariants(deadline *Deadline, store adt.Store, quant Qua
 	{
 		// Validate partition expiration queue contains an entry for each partition and epoch with an expiration.
 		// The queue may be a superset of the partitions that have expirations because we never remove from it.
-		if expirationEpochs, err := adt.AsArray(store, deadline.ExpirationsEpochs); err != nil {
+		if expirationEpochs, err := adt.AsArray(store, deadline.ExpirationsEpochs, DeadlineExpirationAmtBitwidth); err != nil {
 			acc.Addf("error loading expiration queue: %v", err)
 		} else {
 			for epoch, expiringPIdxs := range partitionsWithExpirations { // nolint:nomaprange
@@ -423,7 +467,7 @@ func CheckPartitionStateInvariants(
 
 	// Validate the expiration queue.
 	var expirationEpochs []abi.ChainEpoch
-	if expQ, err := LoadExpirationQueue(store, partition.ExpirationsEpochs, quant); err != nil {
+	if expQ, err := LoadExpirationQueue(store, partition.ExpirationsEpochs, quant, PartitionExpirationAmtBitwidth); err != nil {
 		acc.Addf("error loading expiration queue: %v", err)
 	} else if liveSectors != nil {
 		qsummary := CheckExpirationQueue(expQ, liveSectors, partition.Faults, quant, sectorSize, acc)
@@ -439,7 +483,7 @@ func CheckPartitionStateInvariants(
 
 	// Validate the early termination queue.
 	earlyTerminationCount := 0
-	if earlyQ, err := LoadBitfieldQueue(store, partition.EarlyTerminated, NoQuantization); err != nil {
+	if earlyQ, err := LoadBitfieldQueue(store, partition.EarlyTerminated, NoQuantization, PartitionEarlyTerminationArrayAmtBitwidth); err != nil {
 		acc.Addf("error loading early termination queue: %v", err)
 	} else {
 		earlyTerminationCount = CheckEarlyTerminationQueue(earlyQ, partition.Terminated, acc)
@@ -657,19 +701,19 @@ func CheckMinerInfo(info *MinerInfo, acc *builtin.MessageAccumulator) {
 			"pending owner address %v is same as existing owner %v", info.PendingOwnerAddress, info.Owner)
 	}
 
-	sealProofInfo, found := abi.SealProofInfos[info.SealProofType]
-	acc.Require(found, "miner has unrecognized seal proof type %d", info.SealProofType)
+	windowPoStProofInfo, found := abi.PoStProofInfos[info.WindowPoStProofType]
+	acc.Require(found, "miner has unrecognized Window PoSt proof type %d", info.WindowPoStProofType)
 	if found {
-		acc.Require(sealProofInfo.SectorSize == info.SectorSize,
-			"sector size %d is wrong for seal proof type %d: %d", info.SectorSize, info.SealProofType, sealProofInfo.SectorSize)
+		acc.Require(windowPoStProofInfo.SectorSize == info.SectorSize,
+			"sector size %d is wrong for Window PoSt proof type %d: %d", info.SectorSize, info.WindowPoStProofType, windowPoStProofInfo.SectorSize)
 	}
-	windowPoStProof := sealProofInfo.WindowPoStProof
-	poStProofPolicy, found := builtin.PoStProofPolicies[windowPoStProof]
-	acc.Require(found, "no seal proof policy exists for proof type %d", info.SealProofType)
+
+	poStProofPolicy, found := builtin.PoStProofPolicies[info.WindowPoStProofType]
+	acc.Require(found, "no PoSt proof policy exists for proof type %d", info.WindowPoStProofType)
 	if found {
 		acc.Require(poStProofPolicy.WindowPoStPartitionSectors == info.WindowPoStPartitionSectors,
-			"miner partition sectors %d does not match partition sectors %d for seal proof type %d",
-			info.WindowPoStPartitionSectors, poStProofPolicy.WindowPoStPartitionSectors, info.SealProofType)
+			"miner partition sectors %d does not match partition sectors %d for PoSt proof type %d",
+			info.WindowPoStPartitionSectors, poStProofPolicy.WindowPoStPartitionSectors, info.WindowPoStProofType)
 	}
 }
 
@@ -708,7 +752,7 @@ func CheckPreCommits(st *State, store adt.Store, allocatedSectors map[uint64]boo
 
 	// invert pre-commit expiry queue into a lookup by sector number
 	expireEpochs := make(map[uint64]abi.ChainEpoch)
-	if expiryQ, err := LoadBitfieldQueue(store, st.PreCommittedSectorsExpiry, st.QuantSpecEveryDeadline()); err != nil {
+	if expiryQ, err := LoadBitfieldQueue(store, st.PreCommittedSectorsExpiry, st.QuantSpecEveryDeadline(), PrecommitExpiryAmtBitwidth); err != nil {
 		acc.Addf("error loading pre-commit expiry queue: %v", err)
 	} else {
 		err = expiryQ.ForEach(func(epoch abi.ChainEpoch, bf bitfield.BitField) error {
@@ -726,7 +770,7 @@ func CheckPreCommits(st *State, store adt.Store, allocatedSectors map[uint64]boo
 	}
 
 	precommitTotal := big.Zero()
-	if precommitted, err := adt.AsMap(store, st.PreCommittedSectors); err != nil {
+	if precommitted, err := adt.AsMap(store, st.PreCommittedSectors, builtin.DefaultHamtBitwidth); err != nil {
 		acc.Addf("error loading precommitted sectors: %v", err)
 	} else {
 		var precommit SectorPreCommitOnChainInfo
