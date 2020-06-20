@@ -5,9 +5,9 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type MinerCronEvent struct {
@@ -57,7 +57,7 @@ func CheckStateInvariants(st *State, store adt.Store) (*StateSummary, *builtin.M
 
 func CheckCronInvariants(st *State, store adt.Store, acc *builtin.MessageAccumulator) CronEventsByAddress {
 	byAddress := make(CronEventsByAddress)
-	queue, err := adt.AsMultimap(store, st.CronEventQueue)
+	queue, err := adt.AsMultimap(store, st.CronEventQueue, CronQueueHamtBitwidth, CronQueueAmtBitwidth)
 	if err != nil {
 		acc.Addf("error loading cron event queue: %v", err)
 		// Bail here.
@@ -90,7 +90,7 @@ func CheckCronInvariants(st *State, store adt.Store, acc *builtin.MessageAccumul
 
 func CheckClaimInvariants(st *State, store adt.Store, acc *builtin.MessageAccumulator) ClaimsByAddress {
 	byAddress := make(ClaimsByAddress)
-	claims, err := adt.AsMap(store, st.Claims)
+	claims, err := adt.AsMap(store, st.Claims, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		acc.Addf("error loading power claims: %v", err)
 		// Bail here
@@ -112,7 +112,7 @@ func CheckClaimInvariants(st *State, store adt.Store, acc *builtin.MessageAccumu
 		committedRawPower = big.Add(committedRawPower, claim.RawBytePower)
 		committedQAPower = big.Add(committedQAPower, claim.QualityAdjPower)
 
-		minPower, err := builtin.ConsensusMinerMinPower(claim.SealProofType)
+		minPower, err := builtin.ConsensusMinerMinPower(claim.WindowPoStProofType)
 		acc.Require(err == nil, "could not get consensus miner min power for miner %v: %v", addr, err)
 		if err != nil {
 			return nil // noted above
@@ -152,7 +152,7 @@ func CheckProofValidationInvariants(st *State, store adt.Store, claims ClaimsByA
 	}
 
 	proofs := make(ProofsByAddress)
-	if queue, err := adt.AsMultimap(store, *st.ProofValidationBatch); err != nil {
+	if queue, err := adt.AsMultimap(store, *st.ProofValidationBatch, builtin.DefaultHamtBitwidth, ProofValidationBatchAmtBitwidth); err != nil {
 		acc.Addf("error loading proof validation queue: %v", err)
 	} else {
 		err = queue.ForAll(func(key string, arr *adt.Array) error {
@@ -169,8 +169,10 @@ func CheckProofValidationInvariants(st *State, store adt.Store, claims ClaimsByA
 
 			var info proof.SealVerifyInfo
 			err = arr.ForEach(&info, func(i int64) error {
-				acc.Require(claim.SealProofType == info.SealProof, "miner submitted proof with proof type %d different from claim %d",
-					info.SealProof, claim.SealProofType)
+				sectorWindowPoStProofType, err := info.SealProof.RegisteredWindowPoStProof()
+				acc.RequireNoError(err, "failed to get PoSt proof type for seal proof %d", info.SealProof)
+				acc.Require(claim.WindowPoStProofType == sectorWindowPoStProofType, "miner submitted proof with proof type %d different from claim %d",
+					sectorWindowPoStProofType, claim.WindowPoStProofType)
 				proofs[addr] = append(proofs[addr], info)
 				return nil
 			})
