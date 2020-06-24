@@ -1,7 +1,6 @@
 package cron_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/filecoin-project/go-state-types/abi"
@@ -9,10 +8,10 @@ import (
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/cron"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/cron"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -23,7 +22,7 @@ func TestConstructor(t *testing.T) {
 	actor := cronHarness{cron.Actor{}, t}
 
 	receiver := tutil.NewIDAddr(t, 100)
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("construct with empty entries", func(t *testing.T) {
 		rt := builder.Build(t)
@@ -65,7 +64,7 @@ func TestEpochTick(t *testing.T) {
 	actor := cronHarness{cron.Actor{}, t}
 
 	receiver := tutil.NewIDAddr(t, 100)
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("epoch tick with empty entries", func(t *testing.T) {
 		rt := builder.Build(t)
