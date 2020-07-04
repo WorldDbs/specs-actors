@@ -8,18 +8,18 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/account"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/cron"
-	init_ "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/paych"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/cron"
+	init_ "github.com/filecoin-project/specs-actors/v3/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/paych"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/verifreg"
 )
 
 // Within this code, Go errors are not expected, but are often converted to messages so that execution
@@ -159,7 +159,6 @@ func CheckStateInvariants(tree *Tree, expectedBalanceTotal abi.TokenAmount, prio
 
 func CheckMinersAgainstPower(acc *builtin.MessageAccumulator, minerSummaries map[addr.Address]*miner.StateSummary, powerSummary *power.StateSummary) {
 	for addr, minerSummary := range minerSummaries { // nolint:nomaprange
-
 		// check claim
 		claim, ok := powerSummary.Claims[addr]
 		acc.Require(ok, "miner %v has no power claim", addr)
@@ -167,13 +166,14 @@ func CheckMinersAgainstPower(acc *builtin.MessageAccumulator, minerSummaries map
 			claimPower := miner.NewPowerPair(claim.RawBytePower, claim.QualityAdjPower)
 			acc.Require(minerSummary.ActivePower.Equals(claimPower),
 				"miner %v computed active power %v does not match claim %v", addr, minerSummary.ActivePower, claimPower)
-			acc.Require(minerSummary.SealProofType == claim.SealProofType,
-				"miner seal proof type %d does not match claim proof type %d", minerSummary.SealProofType, claim.SealProofType)
+			acc.Require(minerSummary.WindowPoStProofType == claim.WindowPoStProofType,
+				"miner seal proof type %d does not match claim proof type %d", minerSummary.WindowPoStProofType, claim.WindowPoStProofType)
 		}
 
 		// check crons
 		crons, ok := powerSummary.Crons[addr]
 		if !ok {
+			acc.Addf("miner %s has no cron events, at least one proving period cron expected", addr)
 			continue
 		}
 
