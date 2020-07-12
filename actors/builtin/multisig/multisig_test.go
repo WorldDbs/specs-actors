@@ -2,7 +2,6 @@ package multisig_test
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
@@ -11,17 +10,16 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/filecoin-project/go-state-types/exitcode"
-	"github.com/filecoin-project/go-state-types/network"
 	"github.com/minio/blake2b-simd"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -40,7 +38,7 @@ func TestConstruction(t *testing.T) {
 
 	charlie := tutil.NewIDAddr(t, 103)
 
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 
 	t.Run("simple construction", func(t *testing.T) {
 		rt := builder.Build(t)
@@ -67,7 +65,7 @@ func TestConstruction(t *testing.T) {
 		assert.Equal(t, abi.NewTokenAmount(100), st.InitialBalance)
 		assert.Equal(t, unlockDuration, st.UnlockDuration)
 		assert.Equal(t, startEpoch, st.StartEpoch)
-		txns, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns)
+		txns, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns, builtin.DefaultHamtBitwidth)
 		assert.NoError(t, err)
 		keys, err := txns.CollectKeys()
 		require.NoError(t, err)
@@ -120,7 +118,7 @@ func TestConstruction(t *testing.T) {
 		assert.Equal(t, abi.ChainEpoch(1234), st.StartEpoch)
 
 		// assert no transactions
-		empty, err := adt.MakeEmptyMap(rt.AdtStore()).Root()
+		empty, err := adt.StoreEmptyMap(rt.AdtStore(), builtin.DefaultHamtBitwidth)
 		require.NoError(t, err)
 		assert.Equal(t, empty, st.PendingTxns)
 
@@ -175,7 +173,7 @@ func TestConstruction(t *testing.T) {
 	})
 
 	t.Run("fail to construct multisig if a signer is not resolvable to an ID address", func(t *testing.T) {
-		builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+		builder := mock.NewBuilder(receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 		rt := builder.Build(t)
 		params := multisig.ConstructorParams{
 			Signers:               []addr.Address{anneNonId, bob, charlie},
@@ -235,7 +233,7 @@ func TestVesting(t *testing.T) {
 	const unlockDuration = abi.ChainEpoch(10)
 	var multisigInitialBalance = abi.NewTokenAmount(100)
 
-	builder := mock.NewBuilder(context.Background(), receiver).
+	builder := mock.NewBuilder(receiver).
 		WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID).
 		WithEpoch(0).
 		WithBalance(multisigInitialBalance, multisigInitialBalance).
@@ -420,7 +418,7 @@ func TestPropose(t *testing.T) {
 	var fakeParams = builtin.CBORBytes([]byte{1, 2, 3, 4})
 	var signers = []addr.Address{anne, bob}
 
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 
 	t.Run("simple propose", func(t *testing.T) {
 		const numApprovals = uint64(2)
@@ -537,7 +535,7 @@ func TestApprove(t *testing.T) {
 	var fakeParams = builtin.CBORBytes([]byte{1, 2, 3, 4})
 	var signers = []addr.Address{anne, bob}
 
-	builder := mock.NewBuilder(context.Background(), receiver).
+	builder := mock.NewBuilder(receiver).
 		WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID).
 		WithHasher(blake2b.Sum256)
 
@@ -912,7 +910,7 @@ func TestCancel(t *testing.T) {
 	var sendValue = abi.NewTokenAmount(10)
 	var signers = []addr.Address{anne, bob}
 
-	builder := mock.NewBuilder(context.Background(), receiver).
+	builder := mock.NewBuilder(receiver).
 		WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID).
 		WithHasher(blake2b.Sum256)
 
@@ -1186,7 +1184,7 @@ func TestAddSigner(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			builder := mock.NewBuilder(context.Background(), multisigWalletAdd).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+			builder := mock.NewBuilder(multisigWalletAdd).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 			rt := builder.Build(t)
 			for src, target := range tc.idAddrsMapping {
 				rt.AddIDAddress(src, target)
@@ -1239,7 +1237,7 @@ func TestRemoveSigner(t *testing.T) {
 	const noUnlockDuration = abi.ChainEpoch(0)
 
 	actor := msActorHarness{multisig.Actor{}, t}
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 
 	testCases := []removeSignerTestCase{
 		{
@@ -1480,7 +1478,7 @@ func TestSwapSigners(t *testing.T) {
 	const numApprovals = uint64(1)
 
 	actor := msActorHarness{multisig.Actor{}, t}
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 
 	testCases := []swapTestCase{
 		{
@@ -1686,7 +1684,7 @@ func TestChangeThreshold(t *testing.T) {
 		},
 	}
 
-	builder := mock.NewBuilder(context.Background(), multisigWalletAdd).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+	builder := mock.NewBuilder(multisigWalletAdd).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
 			rt := builder.Build(t)
@@ -1743,7 +1741,7 @@ func TestLockBalance(t *testing.T) {
 	anne := tutil.NewIDAddr(t, 101)
 	bob := tutil.NewIDAddr(t, 102)
 
-	builder := mock.NewBuilder(context.Background(), receiver).
+	builder := mock.NewBuilder(receiver).
 		WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID).
 		WithEpoch(0).
 		WithHasher(blake2b.Sum256)
@@ -1897,7 +1895,7 @@ func TestLockBalance(t *testing.T) {
 		})
 		rt.Reset()
 	})
-	
+
 	t.Run("checks preconditions", func(t *testing.T) {
 		rt := builder.Build(t)
 
@@ -1916,10 +1914,6 @@ func TestLockBalance(t *testing.T) {
 		rt.ExpectAbort(exitcode.ErrIllegalArgument, func() {
 			actor.lockBalance(rt, vestStart, vestDuration, abi.NewTokenAmount(-1))
 		})
-
-		// Before version 7, allow negative amount.
-		rt.SetNetworkVersion(network.Version6)
-		actor.lockBalance(rt, vestStart, vestDuration, abi.NewTokenAmount(-1))
 	})
 }
 
@@ -2074,7 +2068,7 @@ func (h *msActorHarness) assertTransactions(rt *mock.Runtime, expected ...multis
 	var st multisig.State
 	rt.GetState(&st)
 
-	txns, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns)
+	txns, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns, builtin.DefaultHamtBitwidth)
 	assert.NoError(h.t, err)
 	keys, err := txns.CollectKeys()
 	assert.NoError(h.t, err)
