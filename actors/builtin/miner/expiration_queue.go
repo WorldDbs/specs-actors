@@ -10,8 +10,8 @@ import (
 	"github.com/ipfs/go-cid"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/util"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/util"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 // ExpirationSet is a collection of sector numbers that are expiring, either due to
@@ -162,8 +162,8 @@ const entrySectorsMax = 10_000
 // Loads a queue root.
 // Epochs provided to subsequent method calls will be quantized upwards to quanta mod offsetSeed before being
 // written to/read from queue entries.
-func LoadExpirationQueue(store adt.Store, root cid.Cid, quant QuantSpec) (ExpirationQueue, error) {
-	arr, err := adt.AsArray(store, root)
+func LoadExpirationQueue(store adt.Store, root cid.Cid, quant QuantSpec, bitwidth int) (ExpirationQueue, error) {
+	arr, err := adt.AsArray(store, root, bitwidth)
 	if err != nil {
 		return ExpirationQueue{}, xerrors.Errorf("failed to load epoch queue %v: %w", root, err)
 	}
@@ -331,7 +331,7 @@ func (q ExpirationQueue) RescheduleAllAsFaults(faultExpiration abi.ChainEpoch) e
 	}
 
 	// Trim the rescheduled epochs from the queue.
-	if err = q.BatchDelete(rescheduledEpochs); err != nil {
+	if err = q.BatchDelete(rescheduledEpochs, true); err != nil {
 		return err
 	}
 
@@ -558,7 +558,7 @@ func (q ExpirationQueue) PopUntil(until abi.ChainEpoch) (*ExpirationSet, error) 
 		return nil, err
 	}
 
-	if err := q.Array.BatchDelete(poppedKeys); err != nil {
+	if err := q.Array.BatchDelete(poppedKeys, true); err != nil {
 		return nil, err
 	}
 
@@ -660,7 +660,7 @@ func (q ExpirationQueue) traverseMutate(f func(epoch abi.ChainEpoch, es *Expirat
 	}); err != nil && err != errStop {
 		return err
 	}
-	if err := q.Array.BatchDelete(epochsEmptied); err != nil {
+	if err := q.Array.BatchDelete(epochsEmptied, true); err != nil {
 		return err
 	}
 	return nil
