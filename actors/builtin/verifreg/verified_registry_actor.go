@@ -10,10 +10,9 @@ import (
 	"github.com/filecoin-project/go-state-types/exitcode"
 	verifreg0 "github.com/filecoin-project/specs-actors/actors/builtin/verifreg"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
-	. "github.com/filecoin-project/specs-actors/v2/actors/util"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type Actor struct{}
@@ -54,10 +53,8 @@ func (a Actor) Constructor(rt runtime.Runtime, rootKey *addr.Address) *abi.Empty
 	idAddr, ok := rt.ResolveAddress(*rootKey)
 	builtin.RequireParam(rt, ok, "root should be an ID address")
 
-	emptyMap, err := adt.MakeEmptyMap(adt.AsStore(rt)).Root()
-	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to create state")
-
-	st := ConstructState(emptyMap, idAddr)
+	st, err := ConstructState(adt.AsStore(rt), idAddr)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to construct state")
 	rt.StateCreate(st)
 	return nil
 }
@@ -84,10 +81,10 @@ func (a Actor) AddVerifier(rt runtime.Runtime, params *AddVerifierParams) *abi.E
 		rt.Abortf(exitcode.ErrIllegalArgument, "Rootkey cannot be added as verifier")
 	}
 	rt.StateTransaction(&st, func() {
-		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers)
+		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verifiers")
 
-		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients)
+		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verified clients")
 
 		// A verified client cannot become a verifier
@@ -116,11 +113,12 @@ func (a Actor) RemoveVerifier(rt runtime.Runtime, verifierAddr *addr.Address) *a
 	rt.ValidateImmediateCallerIs(st.RootKey)
 
 	rt.StateTransaction(&st, func() {
-		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers)
+		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verifiers")
 
-		err = verifiers.Delete(abi.AddrKey(verifier))
+		found, err := verifiers.TryDelete(abi.AddrKey(verifier))
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to remove verifier")
+		builtin.RequireParam(rt, found, "no such verifier %v", verifierAddr)
 
 		st.Verifiers, err = verifiers.Root()
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to flush verifiers")
@@ -153,10 +151,10 @@ func (a Actor) AddVerifiedClient(rt runtime.Runtime, params *AddVerifiedClientPa
 	}
 
 	rt.StateTransaction(&st, func() {
-		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers)
+		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verifiers")
 
-		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients)
+		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verified clients")
 
 		// Validate caller is one of the verifiers.
@@ -188,7 +186,7 @@ func (a Actor) AddVerifiedClient(rt runtime.Runtime, params *AddVerifiedClientPa
 		// This allowance cannot be changed by calls to AddVerifiedClient as long as the client has not been removed.
 		// If parties need more allowance, they need to create a new verified client or use up the the current allowance
 		// and then create a new verified client.
-		found, err = verifiedClients.Get(abi.AddrKey(client), &verifierCap)
+		found, err = verifiedClients.Get(abi.AddrKey(client), nil)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to get verified client %v", client)
 		if found {
 			rt.Abortf(exitcode.ErrIllegalArgument, "verified client already exists: %v", client)
@@ -228,7 +226,7 @@ func (a Actor) UseBytes(rt runtime.Runtime, params *UseBytesParams) *abi.EmptyVa
 
 	var st State
 	rt.StateTransaction(&st, func() {
-		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients)
+		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verified clients")
 
 		var vcCap DataCap
@@ -237,7 +235,7 @@ func (a Actor) UseBytes(rt runtime.Runtime, params *UseBytesParams) *abi.EmptyVa
 		if !found {
 			rt.Abortf(exitcode.ErrNotFound, "no such verified client %v", client)
 		}
-		Assert(vcCap.GreaterThanEqual(big.Zero()))
+		builtin.RequireState(rt, vcCap.GreaterThanEqual(big.Zero()), "negative cap for client %v: %v", client, vcCap)
 
 		if params.DealSize.GreaterThan(vcCap) {
 			rt.Abortf(exitcode.ErrIllegalArgument, "DealSize %d exceeds allowable cap: %d for VerifiedClient %v", params.DealSize, vcCap, client)
@@ -289,10 +287,10 @@ func (a Actor) RestoreBytes(rt runtime.Runtime, params *RestoreBytesParams) *abi
 	}
 
 	rt.StateTransaction(&st, func() {
-		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients)
+		verifiedClients, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verified clients")
 
-		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers)
+		verifiers, err := adt.AsMap(adt.AsStore(rt), st.Verifiers, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load verifiers")
 
 		// validate we are NOT attempting to do this for a verifier
