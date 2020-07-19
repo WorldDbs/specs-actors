@@ -7,14 +7,24 @@ import (
 
 	block "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	cbor "github.com/ipfs/go-ipld-cbor"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
+// Creates a new, empty, unsynchronized IPLD store in memory.
+// This store is appropriate for most kinds of testing.
+func NewADTStore(ctx context.Context) adt.Store {
+	return adt.WrapBlockStore(ctx, NewBlockStoreInMemory())
+}
+
+//
+// A basic in-memory block store.
+//
 type BlockStoreInMemory struct {
 	data map[cid.Cid]block.Block
 }
+var _ ipldcbor.IpldBlockstore = (*BlockStoreInMemory)(nil)
 
 func NewBlockStoreInMemory() *BlockStoreInMemory {
 	return &BlockStoreInMemory{make(map[cid.Cid]block.Block)}
@@ -33,49 +43,47 @@ func (mb *BlockStoreInMemory) Put(b block.Block) error {
 	return nil
 }
 
-// Creates a new, empty IPLD store in memory.
-func NewADTStore(ctx context.Context) adt.Store {
-	return adt.WrapStore(ctx, cbor.NewCborStore(NewBlockStoreInMemory()))
-
-}
-
-type SyncBlockStoreInMemory struct {
-	bs *BlockStoreInMemory
+//
+// Synchronized block store wrapper.
+//
+type SyncBlockStore struct {
+	bs ipldcbor.IpldBlockstore
 	mu sync.Mutex
 }
 
-func NewSyncBlockStoreInMemory() *SyncBlockStoreInMemory {
-	return &SyncBlockStoreInMemory{
-		bs: NewBlockStoreInMemory(),
+var _ ipldcbor.IpldBlockstore = (*SyncBlockStore)(nil)
+
+func NewSyncBlockStore(bs ipldcbor.IpldBlockstore) *SyncBlockStore {
+	return &SyncBlockStore{
+		bs: bs,
 	}
 }
 
-func (ss *SyncBlockStoreInMemory) Get(c cid.Cid) (block.Block, error) {
+func (ss *SyncBlockStore) Get(c cid.Cid) (block.Block, error) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	return ss.bs.Get(c)
 }
 
-func (ss *SyncBlockStoreInMemory) Put(b block.Block) error {
+func (ss *SyncBlockStore) Put(b block.Block) error {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	return ss.bs.Put(b)
 }
 
-// Creates a new, threadsafe, empty IPLD store in memory
-func NewSyncADTStore(ctx context.Context) adt.Store {
-	return adt.WrapStore(ctx, cbor.NewCborStore(NewSyncBlockStoreInMemory()))
-}
-
+//
+// Metric-recording block store wrapper.
+//
 type MetricsBlockStore struct {
-	bs         cbor.IpldBlockstore
+	bs         ipldcbor.IpldBlockstore
 	Writes     uint64
 	WriteBytes uint64
 	Reads      uint64
 	ReadBytes  uint64
 }
+var _ ipldcbor.IpldBlockstore = (*MetricsBlockStore)(nil)
 
-func NewMetricsBlockStore(underlying cbor.IpldBlockstore) *MetricsBlockStore {
+func NewMetricsBlockStore(underlying ipldcbor.IpldBlockstore) *MetricsBlockStore {
 	return &MetricsBlockStore{bs: underlying}
 }
 
