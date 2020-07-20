@@ -2,9 +2,7 @@ package power_test
 
 import (
 	"bytes"
-	"context"
 	"fmt"
-	"github.com/filecoin-project/go-state-types/network"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,19 +11,20 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/exitcode"
+	"github.com/filecoin-project/go-state-types/network"
 	cid "github.com/ipfs/go-cid"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	initact "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/market"
-	mineract "github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	initact "github.com/filecoin-project/specs-actors/v3/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
+	mineract "github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -38,7 +37,7 @@ func TestConstruction(t *testing.T) {
 	miner := tutil.NewIDAddr(t, 103)
 	actr := tutil.NewActorAddr(t, "actor")
 
-	builder := mock.NewBuilder(context.Background(), builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("simple construction", func(t *testing.T) {
 		rt := builder.Build(t)
@@ -51,7 +50,8 @@ func TestConstruction(t *testing.T) {
 		rt := builder.Build(t)
 		actor.constructAndVerify(rt)
 
-		actor.createMiner(rt, owner, owner, miner, actr, abi.PeerID("miner"), []abi.Multiaddrs{{1}}, abi.RegisteredSealProof_StackedDrg32GiBV1_1, abi.NewTokenAmount(10))
+		actor.createMiner(rt, owner, owner, miner, actr, abi.PeerID("miner"), []abi.Multiaddrs{{1}},
+			abi.RegisteredPoStProof_StackedDrgWindow32GiBV1, abi.NewTokenAmount(10))
 
 		var st power.State
 		rt.GetState(&st)
@@ -60,7 +60,7 @@ func TestConstruction(t *testing.T) {
 		assert.Equal(t, abi.NewStoragePower(0), st.TotalRawBytePower)
 		assert.Equal(t, int64(0), st.MinerAboveMinPowerCount)
 
-		claim, err := adt.AsMap(adt.AsStore(rt), st.Claims)
+		claim, err := adt.AsMap(adt.AsStore(rt), st.Claims, builtin.DefaultHamtBitwidth)
 		assert.NoError(t, err)
 		keys, err := claim.CollectKeys()
 		require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestConstruction(t *testing.T) {
 		found, err_ := claim.Get(asKey(keys[0]), &actualClaim)
 		require.NoError(t, err_)
 		assert.True(t, found)
-		assert.Equal(t, power.Claim{abi.RegisteredSealProof_StackedDrg32GiBV1_1, big.Zero(), big.Zero()}, actualClaim) // miner has not proven anything
+		assert.Equal(t, power.Claim{abi.RegisteredPoStProof_StackedDrgWindow32GiBV1, big.Zero(), big.Zero()}, actualClaim) // miner has not proven anything
 
 		verifyEmptyMap(t, rt, st.CronEventQueue)
 		actor.checkState(rt)
@@ -80,7 +80,7 @@ func TestCreateMinerFailures(t *testing.T) {
 	owner := tutil.NewIDAddr(t, 101)
 	peer := abi.PeerID("miner")
 	mAddr := []abi.Multiaddrs{{1}}
-	sealProofType := abi.RegisteredSealProof_StackedDrg2KiBV1_1
+	windowPoStProofType := abi.RegisteredPoStProof_StackedDrgWindow2KiBV1
 
 	t.Run("fails when caller is not of signable type", func(t *testing.T) {
 		rt, ac := basicPowerSetup(t)
@@ -97,11 +97,11 @@ func TestCreateMinerFailures(t *testing.T) {
 		rt, ac := basicPowerSetup(t)
 
 		createMinerParams := &power.CreateMinerParams{
-			Owner:         owner,
-			Worker:        owner,
-			SealProofType: sealProofType,
-			Peer:          peer,
-			Multiaddrs:    mAddr,
+			Owner:                owner,
+			Worker:               owner,
+			WindowPoStProofType:  windowPoStProofType,
+			Peer:                 peer,
+			Multiaddrs:           mAddr,
 		}
 
 		// owner send CreateMiner to Actor
@@ -112,7 +112,7 @@ func TestCreateMinerFailures(t *testing.T) {
 
 		msgParams := &initact.ExecParams{
 			CodeCID:           builtin.StorageMinerActorCodeID,
-			ConstructorParams: initCreateMinerBytes(t, owner, owner, peer, mAddr, sealProofType),
+			ConstructorParams: initCreateMinerBytes(t, owner, owner, peer, mAddr, windowPoStProofType),
 		}
 		expRet := initact.ExecReturn{
 			IDAddress:     tutil.NewIDAddr(t, 1475),
@@ -259,7 +259,7 @@ func TestPowerAndPledgeAccounting(t *testing.T) {
 	miner5 := tutil.NewIDAddr(t, 115)
 
 	// These tests use the min power for consensus to check the accounting above and below that value.
-	powerUnit, err := builtin.ConsensusMinerMinPower(abi.RegisteredSealProof_StackedDrg32GiBV1_1)
+	powerUnit, err := builtin.ConsensusMinerMinPower(abi.RegisteredPoStProof_StackedDrgWindow32GiBV1)
 	require.NoError(t, err)
 
 	mul := func(a big.Int, b int64) big.Int {
@@ -273,7 +273,7 @@ func TestPowerAndPledgeAccounting(t *testing.T) {
 	// Subtests implicitly rely on ConsensusMinerMinMiners = 3
 	require.Equal(t, 4, power.ConsensusMinerMinMiners, "power.ConsensusMinerMinMiners has changed requiring update to this test")
 
-	builder := mock.NewBuilder(context.Background(), builtin.StoragePowerActorAddr).
+	builder := mock.NewBuilder(builtin.StoragePowerActorAddr).
 		WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("power & pledge accounted below threshold", func(t *testing.T) {
@@ -326,31 +326,23 @@ func TestPowerAndPledgeAccounting(t *testing.T) {
 		actor.checkState(rt)
 	})
 
-	t.Run("after version 7, new miner updates MinerAboveMinPowerCount", func(t *testing.T) {
+	t.Run("new miner updates MinerAboveMinPowerCount", func(t *testing.T) {
 		for _, test := range []struct {
 			version        network.Version
-			proof          abi.RegisteredSealProof
+			proof          abi.RegisteredPoStProof
 			expectedMiners int64
 		}{{
-			version:        network.Version6,
-			proof:          abi.RegisteredSealProof_StackedDrg2KiBV1, // 2K sectors have zero consensus minimum
-			expectedMiners: 0,
-		}, {
-			version:        network.Version6,
-			proof:          abi.RegisteredSealProof_StackedDrg32GiBV1,
-			expectedMiners: 0,
-		}, {
 			version:        network.Version7,
-			proof:          abi.RegisteredSealProof_StackedDrg2KiBV1, // 2K sectors have zero consensus minimum
+			proof:          abi.RegisteredPoStProof_StackedDrgWindow2KiBV1, // 2K sectors have zero consensus minimum
 			expectedMiners: 1,
 		}, {
 			version:        network.Version7,
-			proof:          abi.RegisteredSealProof_StackedDrg32GiBV1,
+			proof:          abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
 			expectedMiners: 0,
 		}} {
 			rt := builder.WithNetworkVersion(test.version).Build(t)
 			actor.constructAndVerify(rt)
-			actor.sealProof = test.proof
+			actor.windowPoStProof = test.proof
 			actor.createMinerBasic(rt, owner, owner, miner1)
 
 			st := getState(rt)
@@ -445,9 +437,9 @@ func TestPowerAndPledgeAccounting(t *testing.T) {
 
 		// miner 5 uses 64GiB sectors and has a higher minimum
 		actor.createMiner(rt, owner, owner, miner5, tutil.NewActorAddr(t, "m5"), abi.PeerID("m5"),
-			nil, abi.RegisteredSealProof_StackedDrg64GiBV1_1, big.Zero())
+			nil, abi.RegisteredPoStProof_StackedDrgWindow64GiBV1, big.Zero())
 
-		power64Unit, err := builtin.ConsensusMinerMinPower(abi.RegisteredSealProof_StackedDrg64GiBV1_1)
+		power64Unit, err := builtin.ConsensusMinerMinPower(abi.RegisteredPoStProof_StackedDrgWindow64GiBV1)
 		require.NoError(t, err)
 		assert.True(t, power64Unit.GreaterThan(powerUnit))
 
@@ -536,7 +528,7 @@ func TestUpdatePledgeTotal(t *testing.T) {
 	actor := newHarness(t)
 	owner := tutil.NewIDAddr(t, 101)
 	miner := tutil.NewIDAddr(t, 111)
-	builder := mock.NewBuilder(context.Background(), builtin.StoragePowerActorAddr).
+	builder := mock.NewBuilder(builtin.StoragePowerActorAddr).
 		WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("update pledge total aborts if miner has no claim", func(t *testing.T) {
@@ -559,7 +551,7 @@ func TestCron(t *testing.T) {
 	miner2 := tutil.NewIDAddr(t, 102)
 	owner := tutil.NewIDAddr(t, 103)
 
-	builder := mock.NewBuilder(context.Background(), builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("calls reward actor", func(t *testing.T) {
 		rt := builder.Build(t)
@@ -578,7 +570,7 @@ func TestCron(t *testing.T) {
 	})
 
 	t.Run("test amount sent to reward actor and state change", func(t *testing.T) {
-		powerUnit, err := builtin.ConsensusMinerMinPower(abi.RegisteredSealProof_StackedDrg2KiBV1_1)
+		powerUnit, err := builtin.ConsensusMinerMinPower(abi.RegisteredPoStProof_StackedDrgWindow2KiBV1)
 		require.NoError(t, err)
 
 		miner3 := tutil.NewIDAddr(t, 103)
@@ -673,7 +665,7 @@ func TestCron(t *testing.T) {
 		// assert used cron events are cleaned up
 		st := getState(rt)
 
-		mmap, err := adt.AsMultimap(rt.AdtStore(), st.CronEventQueue)
+		mmap, err := adt.AsMultimap(rt.AdtStore(), st.CronEventQueue, power.CronQueueHamtBitwidth, power.CronQueueAmtBitwidth)
 		require.NoError(t, err)
 
 		var ev power.CronEvent
@@ -741,7 +733,7 @@ func TestCron(t *testing.T) {
 		actor.enrollCronEvent(rt, miner1, 2, []byte{})
 		actor.enrollCronEvent(rt, miner2, 2, []byte{})
 
-		rawPow, err := builtin.ConsensusMinerMinPower(abi.RegisteredSealProof_StackedDrg32GiBV1_1)
+		rawPow, err := builtin.ConsensusMinerMinPower(abi.RegisteredPoStProof_StackedDrgWindow32GiBV1)
 		require.NoError(t, err)
 
 		qaPow := rawPow
@@ -780,6 +772,9 @@ func TestCron(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, found)
 
+		// miner count has been reduced to 1
+		assert.Equal(t, int64(1), st.MinerCount)
+
 		// Next epoch, only the reward actor is invoked
 		rt.SetEpoch(3)
 		rt.ExpectValidateCallerAddr(builtin.CronActorAddr)
@@ -791,65 +786,13 @@ func TestCron(t *testing.T) {
 		rt.Verify()
 		actor.checkState(rt)
 	})
-
-	t.Run("failed call decrements miner count at network version 7", func(t *testing.T) {
-		for _, test := range []struct {
-			version            network.Version
-			versionLabel       string
-			expectedMinerCount int64
-		}{{
-			version:            network.Version6,
-			versionLabel:       "Version6",
-			expectedMinerCount: 1,
-		}, {
-			version:            network.Version7,
-			versionLabel:       "Version7",
-			expectedMinerCount: 0,
-		}} {
-			rt := builder.WithNetworkVersion(test.version).Build(t)
-			rt.NetworkVersion()
-			actor.constructAndVerify(rt)
-
-			rt.SetEpoch(1)
-			actor.createMinerBasic(rt, owner, owner, miner1)
-
-			// expect one miner
-			st := getState(rt)
-			assert.Equal(t, int64(1), st.MinerCount)
-
-			actor.enrollCronEvent(rt, miner1, 1, []byte{})
-
-			rt.SetEpoch(2)
-			rt.ExpectValidateCallerAddr(builtin.CronActorAddr)
-
-			// process batch verifies first
-			rt.ExpectBatchVerifySeals(nil, nil, nil)
-
-			// send fails
-			rt.ExpectSend(miner1, builtin.MethodsMiner.OnDeferredCronEvent, builtin.CBORBytes(nil), big.Zero(), nil, exitcode.ErrIllegalState)
-
-			// Reward actor still invoked
-			power := abi.NewStoragePower(0)
-			rt.ExpectSend(builtin.RewardActorAddr, builtin.MethodsReward.UpdateNetworkKPI, &power, big.Zero(), nil, exitcode.Ok)
-			rt.SetCaller(builtin.CronActorAddr, builtin.CronActorCodeID)
-			rt.Call(actor.Actor.OnEpochTickEnd, nil)
-			rt.Verify()
-
-			// expect cron failure was logged
-			rt.ExpectLogsContain("OnDeferredCronEvent failed for miner")
-
-			// miner count has been changed or not depending on version
-			st = getState(rt)
-			assert.Equal(t, test.expectedMinerCount, st.MinerCount)
-		}
-	})
 }
 
 func TestSubmitPoRepForBulkVerify(t *testing.T) {
 	actor := newHarness(t)
 	miner := tutil.NewIDAddr(t, 101)
 	owner := tutil.NewIDAddr(t, 101)
-	builder := mock.NewBuilder(context.Background(), builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("registers porep and charges gas", func(t *testing.T) {
 		rt := builder.Build(t)
@@ -867,7 +810,7 @@ func TestSubmitPoRepForBulkVerify(t *testing.T) {
 		st := getState(rt)
 		store := rt.AdtStore()
 		require.NotNil(t, st.ProofValidationBatch)
-		mmap, err := adt.AsMultimap(store, *st.ProofValidationBatch)
+		mmap, err := adt.AsMultimap(store, *st.ProofValidationBatch, builtin.DefaultHamtBitwidth, power.ProofValidationBatchAmtBitwidth)
 		require.NoError(t, err)
 		arr, found, err := mmap.Get(abi.AddrKey(miner))
 		require.NoError(t, err)
@@ -1131,7 +1074,7 @@ func asKey(in string) abi.Keyer {
 }
 
 func verifyEmptyMap(t testing.TB, rt *mock.Runtime, cid cid.Cid) {
-	mapChecked, err := adt.AsMap(adt.AsStore(rt), cid)
+	mapChecked, err := adt.AsMap(adt.AsStore(rt), cid, builtin.DefaultHamtBitwidth)
 	assert.NoError(t, err)
 	keys, err := mapChecked.CollectKeys()
 	require.NoError(t, err)
@@ -1140,16 +1083,18 @@ func verifyEmptyMap(t testing.TB, rt *mock.Runtime, cid cid.Cid) {
 
 type spActorHarness struct {
 	power.Actor
-	t         *testing.T
-	minerSeq  int
-	sealProof abi.RegisteredSealProof
+	t                *testing.T
+	minerSeq         int
+	sealProof        abi.RegisteredSealProof
+	windowPoStProof  abi.RegisteredPoStProof
 }
 
 func newHarness(t *testing.T) *spActorHarness {
 	return &spActorHarness{
-		Actor:     power.Actor{},
-		t:         t,
-		sealProof: abi.RegisteredSealProof_StackedDrg32GiBV1_1,
+		Actor:            power.Actor{},
+		t:                t,
+		sealProof:        abi.RegisteredSealProof_StackedDrg32GiBV1_1,
+		windowPoStProof:  abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
 	}
 }
 
@@ -1208,17 +1153,17 @@ func (h *spActorHarness) onEpochTickEnd(rt *mock.Runtime, currEpoch abi.ChainEpo
 }
 
 func (h *spActorHarness) createMiner(rt *mock.Runtime, owner, worker, miner, robust addr.Address, peer abi.PeerID,
-	multiaddrs []abi.Multiaddrs, sealProofType abi.RegisteredSealProof, value abi.TokenAmount) {
+	multiaddrs []abi.Multiaddrs, windowPoStProofType abi.RegisteredPoStProof, value abi.TokenAmount) {
 
 	st := getState(rt)
 	prevMinerCount := st.MinerCount
 
 	createMinerParams := &power.CreateMinerParams{
-		Owner:         owner,
-		Worker:        worker,
-		SealProofType: sealProofType,
-		Peer:          peer,
-		Multiaddrs:    multiaddrs,
+		Owner:                owner,
+		Worker:               worker,
+		WindowPoStProofType:  windowPoStProofType,
+		Peer:                 peer,
+		Multiaddrs:           multiaddrs,
 	}
 
 	// owner send CreateMiner to Actor
@@ -1234,7 +1179,7 @@ func (h *spActorHarness) createMiner(rt *mock.Runtime, owner, worker, miner, rob
 
 	msgParams := &initact.ExecParams{
 		CodeCID:           builtin.StorageMinerActorCodeID,
-		ConstructorParams: initCreateMinerBytes(h.t, owner, worker, peer, multiaddrs, sealProofType),
+		ConstructorParams: initCreateMinerBytes(h.t, owner, worker, peer, multiaddrs, windowPoStProofType),
 	}
 	rt.ExpectSend(builtin.InitActorAddr, builtin.MethodsInit.Exec, msgParams, value, createMinerRet, 0)
 	rt.Call(h.Actor.CreateMiner, createMinerParams)
@@ -1251,7 +1196,7 @@ func (h *spActorHarness) getClaim(rt *mock.Runtime, a addr.Address) *power.Claim
 	var st power.State
 	rt.GetState(&st)
 
-	claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
+	claims, err := adt.AsMap(adt.AsStore(rt), st.Claims, builtin.DefaultHamtBitwidth)
 	require.NoError(h.t, err)
 
 	var out power.Claim
@@ -1264,7 +1209,7 @@ func (h *spActorHarness) getClaim(rt *mock.Runtime, a addr.Address) *power.Claim
 
 func (h *spActorHarness) deleteClaim(rt *mock.Runtime, a addr.Address) {
 	st := getState(rt)
-	claims, err := adt.AsMap(adt.AsStore(rt), st.Claims)
+	claims, err := adt.AsMap(adt.AsStore(rt), st.Claims, builtin.DefaultHamtBitwidth)
 	require.NoError(h.t, err)
 	err = claims.Delete(abi.AddrKey(a))
 	require.NoError(h.t, err)
@@ -1277,7 +1222,7 @@ func (h *spActorHarness) getEnrolledCronTicks(rt *mock.Runtime, epoch abi.ChainE
 	var st power.State
 	rt.GetState(&st)
 
-	events, err := adt.AsMultimap(adt.AsStore(rt), st.CronEventQueue)
+	events, err := adt.AsMultimap(adt.AsStore(rt), st.CronEventQueue, power.CronQueueHamtBitwidth, power.CronQueueAmtBitwidth)
 	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load cron events")
 
 	evts, found, err := events.Get(abi.IntKey(int64(epoch)))
@@ -1296,7 +1241,7 @@ func (h *spActorHarness) getEnrolledCronTicks(rt *mock.Runtime, epoch abi.ChainE
 }
 
 func basicPowerSetup(t *testing.T) (*mock.Runtime, *spActorHarness) {
-	builder := mock.NewBuilder(context.Background(), builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(builtin.StoragePowerActorAddr).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 	rt := builder.Build(t)
 	h := newHarness(t)
 	h.constructAndVerify(rt)
@@ -1308,7 +1253,7 @@ func (h *spActorHarness) createMinerBasic(rt *mock.Runtime, owner, worker, miner
 	label := strconv.Itoa(h.minerSeq)
 	actrAddr := tutil.NewActorAddr(h.t, label)
 	h.minerSeq += 1
-	h.createMiner(rt, owner, worker, miner, actrAddr, abi.PeerID(label), nil, h.sealProof, big.Zero())
+	h.createMiner(rt, owner, worker, miner, actrAddr, abi.PeerID(label), nil, h.windowPoStProof, big.Zero())
 }
 
 func (h *spActorHarness) updateClaimedPower(rt *mock.Runtime, miner addr.Address, rawDelta, qaDelta abi.StoragePower) {
@@ -1402,13 +1347,13 @@ func (h *spActorHarness) checkState(rt *mock.Runtime) {
 	assert.True(h.t, msgs.IsEmpty(), strings.Join(msgs.Messages(), "\n"))
 }
 
-func initCreateMinerBytes(t testing.TB, owner, worker addr.Address, peer abi.PeerID, multiaddrs []abi.Multiaddrs, sealProofType abi.RegisteredSealProof) []byte {
+func initCreateMinerBytes(t testing.TB, owner, worker addr.Address, peer abi.PeerID, multiaddrs []abi.Multiaddrs, windowPoStProofType abi.RegisteredPoStProof) []byte {
 	params := &power.MinerConstructorParams{
-		OwnerAddr:     owner,
-		WorkerAddr:    worker,
-		SealProofType: sealProofType,
-		PeerId:        peer,
-		Multiaddrs:    multiaddrs,
+		OwnerAddr:            owner,
+		WorkerAddr:           worker,
+		WindowPoStProofType:  windowPoStProofType,
+		PeerId:               peer,
+		Multiaddrs:           multiaddrs,
 	}
 
 	buf := new(bytes.Buffer)
