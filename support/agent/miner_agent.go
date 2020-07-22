@@ -16,10 +16,10 @@ import (
 	mh "github.com/multiformats/go-multihash"
 	"github.com/pkg/errors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
 )
 
 type MinerAgentConfig struct {
@@ -134,9 +134,15 @@ func (ma *MinerAgent) Tick(s SimState) ([]message, error) {
 	// between PreCommits. For now always assume we have enough funds for the PreCommit deposit.
 	if err := ma.preCommitEvents.Tick(func() error {
 		// can't create precommit if in fee debt
-		if st, err := ma.getState(s); err != nil {
+		mSt, err := s.MinerState(ma.IDAddress)
+		if err != nil {
 			return err
-		} else if st.FeeDebt.GreaterThan(big.Zero()) {
+		}
+		feeDebt, err := mSt.FeeDebt(s.Store())
+		if err != nil {
+			return err
+		}
+		if feeDebt.GreaterThan(big.Zero()) {
 			return nil
 		}
 
@@ -252,8 +258,8 @@ func (ma *MinerAgent) createPreCommit(s SimState, currentEpoch abi.ChainEpoch) (
 		if err != nil {
 			return message{}, err
 		}
-		if sinfo.Expiration > expiration {
-			params.Expiration = sinfo.Expiration
+		if sinfo.Expiration() > expiration {
+			params.Expiration = sinfo.Expiration()
 		}
 
 		dlInfo, pIdx, err := ma.dlInfoForSector(s, upgradeNumber)
@@ -521,21 +527,20 @@ func (ma *MinerAgent) updateMarketBalance() []message {
 
 // looks up sector deadline and partition so we can start adding it to PoSts
 func (ma *MinerAgent) registerSector(v SimState, sectorNumber abi.SectorNumber, committedCapacity bool, upgrade bool) error {
-	var st miner.State
-	err := v.GetState(ma.IDAddress, &st)
+	mSt, err := v.MinerState(ma.IDAddress)
 	if err != nil {
 		return err
 	}
 
 	// first check for sector
-	if found, err := st.HasSectorNo(v.Store(), sectorNumber); err != nil {
+	if found, err := mSt.HasSectorNo(v.Store(), sectorNumber); err != nil {
 		return err
 	} else if !found {
 		fmt.Printf("failed to register sector %d, did proof verification fail?\n", sectorNumber)
 		return nil
 	}
 
-	dlIdx, pIdx, err := st.FindSector(v.Store(), sectorNumber)
+	dlIdx, pIdx, err := mSt.FindSector(v.Store(), sectorNumber)
 	if err != nil {
 		return err
 	}
@@ -570,14 +575,17 @@ func (ma *MinerAgent) registerSector(v SimState, sectorNumber abi.SectorNumber, 
 
 // schedule a proof within the deadline's bounds
 func (ma *MinerAgent) scheduleSyncAndNextProof(v SimState, dlIdx uint64) error {
-	var st miner.State
-	err := v.GetState(ma.IDAddress, &st)
+	mSt, err := v.MinerState(ma.IDAddress)
 	if err != nil {
 		return err
 	}
 
 	// find next proving window for this deadline
-	deadlineStart := st.ProvingPeriodStart + abi.ChainEpoch(dlIdx)*miner.WPoStChallengeWindow
+	provingPeriodStart, err := mSt.ProvingPeriodStart(v.Store())
+	if err != nil {
+		return err
+	}
+	deadlineStart := provingPeriodStart + abi.ChainEpoch(dlIdx)*miner.WPoStChallengeWindow
 	if deadlineStart-miner.WPoStChallengeWindow < v.GetEpoch() {
 		deadlineStart += miner.WPoStProvingPeriod
 	}
@@ -663,13 +671,12 @@ func (ma *MinerAgent) recoveryMessage(dlIdx uint64, pIdx uint64, recoveryNumber 
 
 // This function updates all sectors in deadline that have newly expired
 func (ma *MinerAgent) syncMinerState(s SimState, dlIdx uint64) error {
-	st, err := ma.getState(s)
+	mSt, err := s.MinerState(ma.IDAddress)
 	if err != nil {
 		return err
-
 	}
 
-	dl, err := ma.loadDeadlineState(s, st, dlIdx)
+	dl, err := mSt.LoadDeadlineState(s.Store(), dlIdx)
 	if err != nil {
 		return err
 	}
@@ -681,7 +688,7 @@ func (ma *MinerAgent) syncMinerState(s SimState, dlIdx uint64) error {
 		if err != nil {
 			return err
 		}
-		newExpired, err := bitfield.IntersectBitField(part.sectors, partState.Terminated)
+		newExpired, err := bitfield.IntersectBitField(part.sectors, partState.Terminated())
 		if err != nil {
 			return err
 		}
@@ -727,51 +734,34 @@ func filterSlice(ns []uint64, toRemove map[uint64]bool) []uint64 {
 	return nextLive
 }
 
-func (ma *MinerAgent) loadDeadlineState(s SimState, st miner.State, dlIdx uint64) (*miner.Deadline, error) {
-	dls, err := st.LoadDeadlines(s.Store())
+func (ma *MinerAgent) sectorInfo(v SimState, sectorNumber uint64) (SimSectorInfo, error) {
+	mSt, err := v.MinerState(ma.IDAddress)
 	if err != nil {
 		return nil, err
 	}
 
-	return dls.LoadDeadline(s.Store(), dlIdx)
-}
-
-func (ma *MinerAgent) getState(s SimState) (miner.State, error) {
-	var st miner.State
-	err := s.GetState(ma.IDAddress, &st)
-	if err != nil {
-		return miner.State{}, err
-	}
-	return st, err
-}
-
-func (ma *MinerAgent) sectorInfo(v SimState, sectorNumber uint64) (*miner.SectorOnChainInfo, error) {
-	var st miner.State
-	err := v.GetState(ma.IDAddress, &st)
+	sector, err := mSt.LoadSectorInfo(v.Store(), sectorNumber)
 	if err != nil {
 		return nil, err
 	}
-
-	sectors, err := st.LoadSectorInfos(v.Store(), bitfield.NewFromSet([]uint64{uint64(sectorNumber)}))
-	if err != nil {
-		return nil, err
-	}
-	return sectors[0], nil
+	return sector, nil
 }
 
 func (ma *MinerAgent) dlInfoForSector(v SimState, sectorNumber uint64) (*dline.Info, uint64, error) {
-	var st miner.State
-	err := v.GetState(ma.IDAddress, &st)
+	mSt, err := v.MinerState(ma.IDAddress)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	dlIdx, pIdx, err := st.FindSector(v.Store(), abi.SectorNumber(sectorNumber))
+	dlIdx, pIdx, err := mSt.FindSector(v.Store(), abi.SectorNumber(sectorNumber))
 	if err != nil {
 		return nil, 0, err
 	}
 
-	dlInfo := st.DeadlineInfo(v.GetEpoch())
+	dlInfo, err := mSt.DeadlineInfo(v.Store(), v.GetEpoch())
+	if err != nil {
+		return nil, 0, err
+	}
 	sectorDLInfo := miner.NewDeadlineInfo(dlInfo.PeriodStart, dlIdx, v.GetEpoch()).NextNotElapsed()
 	return sectorDLInfo, pIdx, nil
 }
