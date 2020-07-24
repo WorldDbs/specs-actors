@@ -9,10 +9,9 @@ import (
 	reward0 "github.com/filecoin-project/specs-actors/actors/builtin/reward"
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
-	. "github.com/filecoin-project/specs-actors/v2/actors/util"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/smoothing"
 )
 
 // PenaltyMultiplier is the factor miner penaltys are scaled up by
@@ -110,12 +109,12 @@ func (a Actor) AwardBlockReward(rt runtime.Runtime, params *AwardBlockRewardPara
 
 			blockReward = big.Sub(totalReward, params.GasReward)
 			// Since we have already asserted the balance is greater than gas reward blockReward is >= 0
-			AssertMsg(blockReward.GreaterThanEqual(big.Zero()), "programming error, block reward is %v below zero", blockReward)
+			builtin.RequireState(rt, blockReward.GreaterThanEqual(big.Zero()), "programming error, block reward %v below zero", blockReward)
 		}
 		st.TotalStoragePowerReward = big.Add(st.TotalStoragePowerReward, blockReward)
 	})
 
-	AssertMsg(totalReward.LessThanEqual(priorBalance), "reward %v exceeds balance %v", totalReward, priorBalance)
+	builtin.RequireState(rt, totalReward.LessThanEqual(priorBalance), "reward %v exceeds balance %v", totalReward, priorBalance)
 
 	// if this fails, we can assume the miner is responsible and avoid failing here.
 	rewardParams := builtin.ApplyRewardParams{
@@ -161,7 +160,7 @@ func (a Actor) ThisEpochReward(rt runtime.Runtime, _ *abi.EmptyValue) *ThisEpoch
 func (a Actor) UpdateNetworkKPI(rt runtime.Runtime, currRealizedPower *abi.StoragePower) *abi.EmptyValue {
 	rt.ValidateImmediateCallerIs(builtin.StoragePowerActorAddr)
 	if currRealizedPower == nil {
-		rt.Abortf(exitcode.ErrIllegalArgument, "arugment should not be nil")
+		rt.Abortf(exitcode.ErrIllegalArgument, "argument should not be nil")
 	}
 
 	var st State
