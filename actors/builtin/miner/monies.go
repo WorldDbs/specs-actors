@@ -4,11 +4,10 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/exitcode"
-	"github.com/filecoin-project/go-state-types/network"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/math"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/math"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/smoothing"
 )
 
 // Projection period of expected sector block reward for deposit required to pre-commit a sector.
@@ -44,6 +43,9 @@ var ContinuedFaultProjectionPeriod = abi.ChainEpoch((builtin.EpochsInDay * Conti
 
 var TerminationPenaltyLowerBoundProjectionPeriod = abi.ChainEpoch((builtin.EpochsInDay * 35) / 10) // PARAM_SPEC
 
+// FF + 2BR
+var InvalidWindowPoStProjectionPeriod = abi.ChainEpoch(ContinuedFaultProjectionPeriod + 2*builtin.EpochsInDay) // PARAM_SPEC
+
 // Fraction of assumed block reward penalized when a sector is terminated.
 var TerminationRewardFactor = builtin.BigFrac{ // PARAM_SPEC
 	Numerator:   big.NewInt(1),
@@ -57,8 +59,13 @@ const TerminationLifetimeCap = 140 // PARAM_SPEC
 const ConsensusFaultFactor = 5
 
 // Fraction of total reward (block reward + gas reward) to be locked up as of V6
-var LockedRewardFactorNumV6 = big.NewInt(50)
-var LockedRewardFactorDenomV6 = big.NewInt(100)
+var LockedRewardFactorNum = big.NewInt(50)
+var LockedRewardFactorDenom = big.NewInt(100)
+
+// Base reward for successfully disputing a window posts proofs.
+var BaseRewardForDisputedWindowPoSt = big.Mul(big.NewInt(4), builtin.TokenPrecision) // PARAM_SPEC
+// Base penalty for a successful disputed window post proof.
+var BasePenaltyForDisputedWindowPoSt = big.Mul(big.NewInt(20), builtin.TokenPrecision) // PARAM_SPEC
 
 // The projected block reward a sector would earn over some period.
 // Also known as "BR(t)".
@@ -119,6 +126,14 @@ func PledgePenaltyForTermination(dayReward abi.TokenAmount, sectorAge abi.ChainE
 				big.Mul(big.NewInt(builtin.EpochsInDay), TerminationRewardFactor.Denominator)))) // (epochs*AttoFIL/day -> AttoFIL)
 }
 
+// The penalty for optimistically proving a sector with an invalid window PoSt.
+func PledgePenaltyForInvalidWindowPoSt(rewardEstimate, networkQAPowerEstimate smoothing.FilterEstimate, qaSectorPower abi.StoragePower) abi.TokenAmount {
+	return big.Add(
+		ExpectedRewardForPower(rewardEstimate, networkQAPowerEstimate, qaSectorPower, InvalidWindowPoStProjectionPeriod),
+		BasePenaltyForDisputedWindowPoSt,
+	)
+}
+
 // Computes the PreCommit deposit given sector qa weight and current network conditions.
 // PreCommit Deposit = BR(PreCommitDepositProjectionPeriod)
 func PreCommitDepositForPower(rewardEstimate, networkQAPowerEstimate smoothing.FilterEstimate, qaSectorPower abi.StoragePower) abi.TokenAmount {
@@ -176,12 +191,8 @@ func ConsensusFaultPenalty(thisEpochReward abi.TokenAmount) abi.TokenAmount {
 }
 
 // Returns the amount of a reward to vest, and the vesting schedule, for a reward amount.
-func LockedRewardFromReward(reward abi.TokenAmount, nv network.Version) (abi.TokenAmount, *VestSpec) {
-	lockAmount := reward
-	spec := &RewardVestingSpec
-	if nv >= network.Version6 {
-		// Locked amount is 75% of award.
-		lockAmount = big.Div(big.Mul(reward, LockedRewardFactorNumV6), LockedRewardFactorDenomV6)
-	}
-	return lockAmount, spec
+func LockedRewardFromReward(reward abi.TokenAmount) (abi.TokenAmount, *VestSpec) {
+	// Locked amount is 75% of award.
+	lockAmount := big.Div(big.Mul(reward, LockedRewardFactorNum), LockedRewardFactorDenom)
+	return lockAmount, &RewardVestingSpec
 }
