@@ -2,8 +2,6 @@ package math
 
 import (
 	"math/big"
-
-	"github.com/filecoin-project/specs-actors/actors/util/math"
 )
 
 var (
@@ -27,7 +25,7 @@ func init() {
 		"-115682590513835356866803355398940131328",
 		"340282366920938463463374607431768211456",
 	}
-	expNumCoef = math.Parse(num)
+	expNumCoef = Parse(num)
 
 	deno := []string{
 		"1225524182432722209606361",
@@ -45,7 +43,7 @@ func init() {
 		"224599776407103106596571252037123047424",
 		"340282366920938463463374607431768211456",
 	}
-	expDenoCoef = math.Parse(deno)
+	expDenoCoef = Parse(deno)
 }
 
 // ExpNeg accepts x in Q.128 format and computes e^-x.
