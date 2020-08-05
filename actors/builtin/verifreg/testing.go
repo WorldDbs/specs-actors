@@ -5,8 +5,8 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type StateSummary struct {
@@ -21,7 +21,7 @@ func CheckStateInvariants(st *State, store adt.Store) (*StateSummary, *builtin.M
 
 	// Check verifiers
 	allVerifiers := map[addr.Address]DataCap{}
-	if verifiers, err := adt.AsMap(store, st.Verifiers); err != nil {
+	if verifiers, err := adt.AsMap(store, st.Verifiers, builtin.DefaultHamtBitwidth); err != nil {
 		acc.Addf("error loading verifiers: %v", err)
 	} else {
 		var vcap abi.StoragePower
@@ -41,7 +41,7 @@ func CheckStateInvariants(st *State, store adt.Store) (*StateSummary, *builtin.M
 
 	// Check clients
 	allClients := map[addr.Address]DataCap{}
-	if clients, err := adt.AsMap(store, st.VerifiedClients); err != nil {
+	if clients, err := adt.AsMap(store, st.VerifiedClients, builtin.DefaultHamtBitwidth); err != nil {
 		acc.Addf("error loading clients: %v", err)
 	} else {
 		var ccap abi.StoragePower
