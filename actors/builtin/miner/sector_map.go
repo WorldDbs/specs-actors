@@ -5,35 +5,14 @@ import (
 	"sort"
 
 	"github.com/filecoin-project/go-bitfield"
-	"github.com/filecoin-project/go-state-types/network"
 	"golang.org/x/xerrors"
 )
 
 // Maps deadlines to partition maps.
-type DeadlineSectorMap struct {
-	M       map[uint64]PartitionSectorMap
-	Version network.Version
-}
+type DeadlineSectorMap map[uint64]PartitionSectorMap
 
 // Maps partitions to sector bitfields.
-type PartitionSectorMap struct {
-	M       map[uint64]bitfield.BitField
-	Version network.Version
-}
-
-func NewDeadlineSectorMap(ver network.Version) DeadlineSectorMap {
-	return DeadlineSectorMap{
-		M:       make(map[uint64]PartitionSectorMap),
-		Version: ver,
-	}
-}
-
-func NewPartitionSectorMap(ver network.Version) PartitionSectorMap {
-	return PartitionSectorMap{
-		M:       make(map[uint64]bitfield.BitField),
-		Version: ver,
-	}
-}
+type PartitionSectorMap map[uint64]bitfield.BitField
 
 // Check validates all bitfields and counts the number of partitions & sectors
 // contained within the map, and returns an error if they exceed the given
@@ -56,7 +35,7 @@ func (dm DeadlineSectorMap) Check(maxPartitions, maxSectors uint64) error {
 
 // Count counts the number of partitions & sectors within the map.
 func (dm DeadlineSectorMap) Count() (partitions, sectors uint64, err error) {
-	for dlIdx, pm := range dm.M { //nolint:nomaprange
+	for dlIdx, pm := range dm { //nolint:nomaprange
 		partCount, sectorCount, err := pm.Count()
 		if err != nil {
 			return 0, 0, xerrors.Errorf("when counting deadline %d: %w", dlIdx, err)
@@ -74,19 +53,15 @@ func (dm DeadlineSectorMap) Count() (partitions, sectors uint64, err error) {
 	return partitions, sectors, nil
 }
 
-func (dm DeadlineSectorMap) Length() (deadlines int) {
-	return len(dm.M)
-}
-
 // Add records the given sector bitfield at the given deadline/partition index.
 func (dm DeadlineSectorMap) Add(dlIdx, partIdx uint64, sectorNos bitfield.BitField) error {
 	if dlIdx >= WPoStPeriodDeadlines {
 		return xerrors.Errorf("invalid deadline %d", dlIdx)
 	}
-	dl, ok := dm.M[dlIdx]
+	dl, ok := dm[dlIdx]
 	if !ok {
-		dl = NewPartitionSectorMap(dm.Version)
-		dm.M[dlIdx] = dl
+		dl = make(PartitionSectorMap)
+		dm[dlIdx] = dl
 	}
 	return dl.Add(partIdx, sectorNos)
 }
@@ -98,26 +73,20 @@ func (dm DeadlineSectorMap) AddValues(dlIdx, partIdx uint64, sectorNos ...uint64
 
 // Deadlines returns a sorted slice of deadlines in the map.
 func (dm DeadlineSectorMap) Deadlines() []uint64 {
-	deadlines := make([]uint64, 0, len(dm.M))
-	for dlIdx := range dm.M { //nolint:nomaprange
+	deadlines := make([]uint64, 0, len(dm))
+	for dlIdx := range dm { //nolint:nomaprange
 		deadlines = append(deadlines, dlIdx)
 	}
-	if dm.Version < network.Version9 {
-		sort.Slice(deadlines, func(i, j int) bool {
-			return i < j
-		})
-	} else {
-		sort.Slice(deadlines, func(i, j int) bool {
-			return deadlines[i] < deadlines[j]
-		})
-	}
+	sort.Slice(deadlines, func(i, j int) bool {
+		return deadlines[i] < deadlines[j]
+	})
 	return deadlines
 }
 
 // ForEach walks the deadlines in deadline order.
 func (dm DeadlineSectorMap) ForEach(cb func(dlIdx uint64, pm PartitionSectorMap) error) error {
 	for _, dlIdx := range dm.Deadlines() {
-		if err := cb(dlIdx, dm.M[dlIdx]); err != nil {
+		if err := cb(dlIdx, dm[dlIdx]); err != nil {
 			return err
 		}
 	}
@@ -132,20 +101,20 @@ func (pm PartitionSectorMap) AddValues(partIdx uint64, sectorNos ...uint64) erro
 // Add records the given sector bitfield at the given partition index, merging
 // it with any existing bitfields if necessary.
 func (pm PartitionSectorMap) Add(partIdx uint64, sectorNos bitfield.BitField) error {
-	if oldSectorNos, ok := pm.M[partIdx]; ok {
+	if oldSectorNos, ok := pm[partIdx]; ok {
 		var err error
 		sectorNos, err = bitfield.MergeBitFields(sectorNos, oldSectorNos)
 		if err != nil {
 			return xerrors.Errorf("failed to merge sector bitfields: %w", err)
 		}
 	}
-	pm.M[partIdx] = sectorNos
+	pm[partIdx] = sectorNos
 	return nil
 }
 
 // Count counts the number of partitions & sectors within the map.
 func (pm PartitionSectorMap) Count() (partitions, sectors uint64, err error) {
-	for partIdx, bf := range pm.M { //nolint:nomaprange
+	for partIdx, bf := range pm { //nolint:nomaprange
 		count, err := bf.Count()
 		if err != nil {
 			return 0, 0, xerrors.Errorf("failed to parse bitmap for partition %d: %w", partIdx, err)
@@ -155,37 +124,27 @@ func (pm PartitionSectorMap) Count() (partitions, sectors uint64, err error) {
 		}
 		sectors += count
 	}
-	return uint64(len(pm.M)), sectors, nil
+	return uint64(len(pm)), sectors, nil
 }
 
 // Partitions returns a sorted slice of partitions in the map.
 func (pm PartitionSectorMap) Partitions() []uint64 {
-	partitions := make([]uint64, 0, len(pm.M))
-	for partIdx := range pm.M { //nolint:nomaprange
+	partitions := make([]uint64, 0, len(pm))
+	for partIdx := range pm { //nolint:nomaprange
 		partitions = append(partitions, partIdx)
 	}
-	if pm.Version < network.Version9 {
-		sort.Slice(partitions, func(i, j int) bool {
-			return i < j
-		})
-	} else {
-		sort.Slice(partitions, func(i, j int) bool {
-			return partitions[i] < partitions[j]
-		})
-	}
+	sort.Slice(partitions, func(i, j int) bool {
+		return partitions[i] < partitions[j]
+	})
 	return partitions
 }
 
 // ForEach walks the partitions in the map, in order of increasing index.
 func (pm PartitionSectorMap) ForEach(cb func(partIdx uint64, sectorNos bitfield.BitField) error) error {
 	for _, partIdx := range pm.Partitions() {
-		if err := cb(partIdx, pm.M[partIdx]); err != nil {
+		if err := cb(partIdx, pm[partIdx]); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (pm PartitionSectorMap) Length() (partitions int) {
-	return len(pm.M)
 }
