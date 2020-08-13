@@ -1,7 +1,6 @@
 package adt_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/filecoin-project/go-address"
@@ -10,16 +9,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestBalanceTable(t *testing.T) {
 	buildBalanceTable := func() *adt.BalanceTable {
-		rt := mock.NewBuilder(context.Background(), address.Undef).Build(t)
+		rt := mock.NewBuilder(address.Undef).Build(t)
 		store := adt.AsStore(rt)
-		emptyMap := adt.MakeEmptyMap(store)
+		emptyMap, err := adt.MakeEmptyMap(store, builtin.DefaultHamtBitwidth)
+		require.NoError(t, err)
 
 		bt, err := adt.AsBalanceTable(store, tutil.MustRoot(t, emptyMap))
 		require.NoError(t, err)
@@ -126,9 +127,10 @@ func TestBalanceTable(t *testing.T) {
 
 func TestSubtractWithMinimum(t *testing.T) {
 	buildBalanceTable := func() *adt.BalanceTable {
-		rt := mock.NewBuilder(context.Background(), address.Undef).Build(t)
+		rt := mock.NewBuilder(address.Undef).Build(t)
 		store := adt.AsStore(rt)
-		emptyMap := adt.MakeEmptyMap(store)
+		emptyMap, err := adt.MakeEmptyMap(store, builtin.DefaultHamtBitwidth)
+		require.NoError(t, err)
 
 		bt, err := adt.AsBalanceTable(store, tutil.MustRoot(t, emptyMap))
 		require.NoError(t, err)
