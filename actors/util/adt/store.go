@@ -5,17 +5,14 @@ import (
 
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/filecoin-project/go-state-types/exitcode"
+	adt2 "github.com/filecoin-project/specs-actors/v2/actors/util/adt"
 	cid "github.com/ipfs/go-cid"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 
-	vmr "github.com/filecoin-project/specs-actors/v2/actors/runtime"
+	vmr "github.com/filecoin-project/specs-actors/v3/actors/runtime"
 )
 
-// Store defines an interface required to back the ADTs in this package.
-type Store interface {
-	Context() context.Context
-	ipldcbor.IpldStore
-}
+type Store = adt2.Store
 
 // Adapts a vanilla IPLD store as an ADT store.
 func WrapStore(ctx context.Context, store ipldcbor.IpldStore) Store {
@@ -23,6 +20,11 @@ func WrapStore(ctx context.Context, store ipldcbor.IpldStore) Store {
 		ctx:       ctx,
 		IpldStore: store,
 	}
+}
+
+// Adapts a block store as an ADT store.
+func WrapBlockStore(ctx context.Context, bs ipldcbor.IpldBlockstore) Store {
+	return WrapStore(ctx, ipldcbor.NewCborStore(bs))
 }
 
 type wstore struct {
