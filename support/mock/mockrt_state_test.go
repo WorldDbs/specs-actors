@@ -1,7 +1,6 @@
 package mock
 
 import (
-	"context"
 	"io"
 	"testing"
 
@@ -12,9 +11,9 @@ import (
 	mh "github.com/multiformats/go-multihash"
 	cbg "github.com/whyrusleeping/cbor-gen"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 type FakeActor struct{}
@@ -58,7 +57,6 @@ func (s State) UnmarshalCBOR(r io.Reader) error {
 }
 
 var _ runtime.VMActor = FakeActor{}
-
 
 func (a FakeActor) Constructor(rt runtime.Runtime, mutate *cbg.CborBool) *abi.EmptyValue {
 	st := State{Value: 0}
@@ -111,11 +109,10 @@ func (a FakeActor) TransactionStateTwice(rt runtime.Runtime, mutate *cbg.CborBoo
 	return nil
 }
 
-
 func TestIllegalStateModifications(t *testing.T) {
 	actor := FakeActor{}
 	receiver := tutil.NewIDAddr(t, 100)
-	builder := NewBuilder(context.Background(), receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
+	builder := NewBuilder(receiver).WithCaller(builtin.InitActorAddr, builtin.InitActorCodeID)
 
 	t.Run("construction", func(t *testing.T) {
 		rt := builder.Build(t)
@@ -176,4 +173,3 @@ func TestIllegalStateModifications(t *testing.T) {
 		})
 	})
 }
-
