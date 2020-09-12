@@ -1,7 +1,6 @@
 package reward_test
 
 import (
-	"context"
 	"testing"
 
 	address "github.com/filecoin-project/go-address"
@@ -11,10 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -27,7 +26,7 @@ func TestConstructor(t *testing.T) {
 	actor := rewardHarness{reward.Actor{}, t}
 
 	t.Run("construct with 0 power", func(t *testing.T) {
-		rt := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+		rt := mock.NewBuilder(builtin.RewardActorAddr).
 			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID).
 			Build(t)
 		startRealizedPower := abi.NewStoragePower(0)
@@ -41,7 +40,7 @@ func TestConstructor(t *testing.T) {
 		assert.Equal(t, reward.BaselineInitialValue, st.EffectiveBaselinePower)
 	})
 	t.Run("construct with less power than baseline", func(t *testing.T) {
-		rt := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+		rt := mock.NewBuilder(builtin.RewardActorAddr).
 			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID).
 			Build(t)
 		startRealizedPower := big.Lsh(abi.NewStoragePower(1), 39)
@@ -53,7 +52,7 @@ func TestConstructor(t *testing.T) {
 		assert.NotEqual(t, big.Zero(), st.ThisEpochReward)
 	})
 	t.Run("construct with more power than baseline", func(t *testing.T) {
-		rt := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+		rt := mock.NewBuilder(builtin.RewardActorAddr).
 			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID).
 			Build(t)
 		startRealizedPower := reward.BaselineInitialValue
@@ -62,7 +61,7 @@ func TestConstructor(t *testing.T) {
 		rwrd := st.ThisEpochReward
 
 		// start with 2x power
-		rt = mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+		rt = mock.NewBuilder(builtin.RewardActorAddr).
 			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID).
 			Build(t)
 		startRealizedPower = big.Mul(reward.BaselineInitialValue, big.NewInt(2))
@@ -77,7 +76,7 @@ func TestConstructor(t *testing.T) {
 func TestAwardBlockReward(t *testing.T) {
 	actor := rewardHarness{reward.Actor{}, t}
 	winner := tutil.NewIDAddr(t, 1000)
-	builder := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+	builder := mock.NewBuilder(builtin.RewardActorAddr).
 		WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("rejects gas reward exceeding balance", func(t *testing.T) {
@@ -220,7 +219,7 @@ func TestAwardBlockReward(t *testing.T) {
 func TestThisEpochReward(t *testing.T) {
 	t.Run("successfully fetch reward for this epoch", func(t *testing.T) {
 		actor := rewardHarness{reward.Actor{}, t}
-		builder := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+		builder := mock.NewBuilder(builtin.RewardActorAddr).
 			WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 		rt := builder.Build(t)
 		power := abi.NewStoragePower(1 << 50)
@@ -236,7 +235,7 @@ func TestThisEpochReward(t *testing.T) {
 
 func TestSuccessiveKPIUpdates(t *testing.T) {
 	actor := rewardHarness{reward.Actor{}, t}
-	builder := mock.NewBuilder(context.Background(), builtin.RewardActorAddr).
+	builder := mock.NewBuilder(builtin.RewardActorAddr).
 		WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 	rt := builder.Build(t)
 	power := abi.NewStoragePower(1 << 50)
