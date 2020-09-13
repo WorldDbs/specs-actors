@@ -14,41 +14,45 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/ipld"
-	tutils "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/ipld"
+	tutils "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestPrecommittedSectorsStore(t *testing.T) {
 	t.Run("Put, get and delete", func(t *testing.T) {
 		harness := constructStateHarness(t, abi.ChainEpoch(0))
-		sectorNo := abi.SectorNumber(1)
-
-		pc1 := newSectorPreCommitOnChainInfo(sectorNo, tutils.MakeCID("1", &miner.SealedCIDPrefix), abi.NewTokenAmount(1), abi.ChainEpoch(1))
+		pc1 := newSectorPreCommitOnChainInfo(1, tutils.MakeCID("1", &miner.SealedCIDPrefix), abi.NewTokenAmount(1), abi.ChainEpoch(1))
 		harness.putPreCommit(pc1)
-		assert.Equal(t, pc1, harness.getPreCommit(sectorNo))
+		assert.Equal(t, pc1, harness.getPreCommit(1))
 
-		pc2 := newSectorPreCommitOnChainInfo(sectorNo, tutils.MakeCID("2", &miner.SealedCIDPrefix), abi.NewTokenAmount(1), abi.ChainEpoch(1))
+		pc2 := newSectorPreCommitOnChainInfo(2, tutils.MakeCID("2", &miner.SealedCIDPrefix), abi.NewTokenAmount(1), abi.ChainEpoch(1))
 		harness.putPreCommit(pc2)
-		assert.Equal(t, pc2, harness.getPreCommit(sectorNo))
+		assert.Equal(t, pc2, harness.getPreCommit(2))
 
-		harness.deletePreCommit(sectorNo)
-		assert.False(t, harness.hasPreCommit(sectorNo))
+		harness.deletePreCommit(1)
+		assert.False(t, harness.hasPreCommit(1))
 	})
 
 	t.Run("Delete nonexistent value returns an error", func(t *testing.T) {
 		harness := constructStateHarness(t, abi.ChainEpoch(0))
-		sectorNo := abi.SectorNumber(1)
-		err := harness.s.DeletePrecommittedSectors(harness.store, sectorNo)
+		err := harness.s.DeletePrecommittedSectors(harness.store, 1)
 		assert.Error(t, err)
 	})
 
 	t.Run("Get nonexistent value returns false", func(t *testing.T) {
 		harness := constructStateHarness(t, abi.ChainEpoch(0))
-		sectorNo := abi.SectorNumber(1)
-		assert.False(t, harness.hasPreCommit(sectorNo))
+		assert.False(t, harness.hasPreCommit(1))
+	})
+
+	t.Run("Duplicate put rejected", func(t *testing.T) {
+		harness := constructStateHarness(t, abi.ChainEpoch(0))
+		pc1 := newSectorPreCommitOnChainInfo(1, tutils.MakeCID("1", &miner.SealedCIDPrefix), abi.NewTokenAmount(1), abi.ChainEpoch(1))
+		harness.putPreCommit(pc1)
+		err := harness.s.PutPrecommittedSector(harness.store, pc1)
+		assert.Error(t, err)
 	})
 }
 
@@ -603,7 +607,7 @@ func TestAddPreCommitExpiry(t *testing.T) {
 
 		// assert
 		quant := harness.s.QuantSpecEveryDeadline()
-		queue, err := miner.LoadBitfieldQueue(harness.store, harness.s.PreCommittedSectorsExpiry, quant)
+		queue, err := miner.LoadBitfieldQueue(harness.store, harness.s.PreCommittedSectorsExpiry, quant, miner.PrecommitExpiryAmtBitwidth)
 		require.NoError(t, err)
 
 		require.EqualValues(t, 1, queue.Length())
@@ -647,12 +651,11 @@ func TestSectorAssignment(t *testing.T) {
 	t.Run("assign sectors to deadlines", func(t *testing.T) {
 		harness := constructStateHarness(t, abi.ChainEpoch(0))
 
-		newPower, err := harness.s.AssignSectorsToDeadlines(harness.store, 0, sectorInfos,
+		err := harness.s.AssignSectorsToDeadlines(harness.store, 0, sectorInfos,
 			partitionSectors, sectorSize)
+		require.NoError(t, err)
 
 		sectorArr := sectorsArr(t, harness.store, sectorInfos)
-		require.NoError(t, err)
-		require.True(t, newPower.IsZero())
 
 		dls, err := harness.s.LoadDeadlines(harness.store)
 		require.NoError(t, err)
@@ -889,33 +892,16 @@ func (h *stateHarness) deletePreCommit(sectorNo abi.SectorNumber) {
 func constructStateHarness(t *testing.T, periodBoundary abi.ChainEpoch) *stateHarness {
 	// store init
 	store := ipld.NewADTStore(context.Background())
-	emptyMap, err := adt.MakeEmptyMap(store).Root()
-	require.NoError(t, err)
-
-	emptyBitfield := bitfield.NewFromSet(nil)
-	emptyBitfieldCid, err := store.Put(store.Context(), emptyBitfield)
-	require.NoError(t, err)
-
-	emptyArray, err := adt.MakeEmptyArray(store).Root()
-	require.NoError(t, err)
-	emptyDeadline := miner.ConstructDeadline(emptyArray)
-	emptyDeadlineCid, err := store.Put(store.Context(), emptyDeadline)
-	require.NoError(t, err)
-
-	emptyDeadlines := miner.ConstructDeadlines(emptyDeadlineCid)
-	emptyDeadlinesCid, err := store.Put(context.Background(), emptyDeadlines)
-	require.NoError(t, err)
-
 	// state field init
 	owner := tutils.NewBLSAddr(t, 1)
 	worker := tutils.NewBLSAddr(t, 2)
 
-	testSealProofType := abi.RegisteredSealProof_StackedDrg2KiBV1_1
+	testWindowPoStProofType := abi.RegisteredPoStProof_StackedDrgWindow2KiBV1
 
-	sectorSize, err := testSealProofType.SectorSize()
+	sectorSize, err := testWindowPoStProofType.SectorSize()
 	require.NoError(t, err)
 
-	partitionSectors, err := builtin.SealProofWindowPoStPartitionSectors(testSealProofType)
+	partitionSectors, err := builtin.PoStProofWindowPoStPartitionSectors(testWindowPoStProofType)
 	require.NoError(t, err)
 
 	info := miner.MinerInfo{
@@ -924,19 +910,14 @@ func constructStateHarness(t *testing.T, periodBoundary abi.ChainEpoch) *stateHa
 		PendingWorkerKey:           nil,
 		PeerId:                     abi.PeerID("peer"),
 		Multiaddrs:                 testMultiaddrs,
-		SealProofType:              testSealProofType,
+		WindowPoStProofType:        testWindowPoStProofType,
 		SectorSize:                 sectorSize,
 		WindowPoStPartitionSectors: partitionSectors,
 	}
 	infoCid, err := store.Put(context.Background(), &info)
 	require.NoError(t, err)
 
-	emptyVestingFunds := miner.ConstructVestingFunds()
-	emptyVestingFundsCid, err := store.Put(context.Background(), emptyVestingFunds)
-	require.NoError(t, err)
-
-	state, err := miner.ConstructState(infoCid, periodBoundary, 0, emptyBitfieldCid, emptyArray, emptyMap, emptyDeadlinesCid,
-		emptyVestingFundsCid)
+	state, err := miner.ConstructState(store, infoCid, periodBoundary, 0)
 	require.NoError(t, err)
 
 	return &stateHarness{
