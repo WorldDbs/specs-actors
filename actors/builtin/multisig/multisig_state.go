@@ -4,19 +4,15 @@ import (
 	address "github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/go-state-types/exitcode"
 	cid "github.com/ipfs/go-cid"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type State struct {
-	// Signers may be either public-key or actor ID-addresses. The ID address is canonical, but doesn't exist
-	// for a public key that has not yet received a message on chain.
-	// If any signer address is a public-key address, it will be resolved to an ID address and persisted
-	// in this state when the address is used.
-	Signers               []address.Address
+	Signers               []address.Address // Signers must be canonical ID-addresses.
 	NumApprovalsThreshold uint64
 	NextTxnID             TxnID
 
@@ -26,6 +22,16 @@ type State struct {
 	UnlockDuration abi.ChainEpoch
 
 	PendingTxns cid.Cid // HAMT[TxnID]Transaction
+}
+
+// Tests whether an address is in the list of signers.
+func (st *State) IsSigner(address address.Address) bool {
+	for _, signer := range st.Signers {
+		if signer == address {
+			return true
+		}
+	}
+	return false
 }
 
 func (st *State) SetLocked(startEpoch abi.ChainEpoch, unlockDuration abi.ChainEpoch, lockedAmount abi.TokenAmount) {
@@ -61,7 +67,7 @@ func (st *State) AmountLocked(elapsedEpoch abi.ChainEpoch) abi.TokenAmount {
 // Iterates all pending transactions and removes an address from each list of approvals, if present.
 // If an approval list becomes empty, the pending transaction is deleted.
 func (st *State) PurgeApprovals(store adt.Store, addr address.Address) error {
-	txns, err := adt.AsMap(store, st.PendingTxns)
+	txns, err := adt.AsMap(store, st.PendingTxns, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return xerrors.Errorf("failed to load transactions: %w", err)
 	}
@@ -135,18 +141,6 @@ func (st *State) assertAvailable(currBalance abi.TokenAmount, amountToSpend abi.
 	}
 
 	return nil
-}
-
-func getPendingTransaction(ptx *adt.Map, txnID TxnID) (Transaction, error) {
-	var out Transaction
-	found, err := ptx.Get(txnID, &out)
-	if err != nil {
-		return Transaction{}, xerrors.Errorf("failed to read transaction: %w", err)
-	}
-	if !found {
-		return Transaction{}, exitcode.ErrNotFound.Wrapf("failed to find transaction %v", txnID)
-	}
-	return out, nil
 }
 
 // An adt.Map key that just preserves the underlying string.
