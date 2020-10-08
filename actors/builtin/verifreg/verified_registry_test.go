@@ -1,7 +1,6 @@
 package verifreg_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -12,11 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -26,21 +25,17 @@ func TestExports(t *testing.T) {
 func TestConstruction(t *testing.T) {
 	receiver := tutil.NewIDAddr(t, 100)
 
-	runtimeSetup := func() *mock.RuntimeBuilder {
-		builder := mock.NewBuilder(context.Background(), receiver).
-			WithCaller(builtin.SystemActorAddr, builtin.InitActorCodeID)
-
-		return builder
-	}
+	builder := mock.NewBuilder(receiver).
+		WithCaller(builtin.SystemActorAddr, builtin.InitActorCodeID)
 
 	t.Run("successful construction with root ID address", func(t *testing.T) {
-		rt := runtimeSetup().Build(t)
+		rt := builder.Build(t)
 		raddr := tutil.NewIDAddr(t, 101)
 
 		actor := verifRegActorTestHarness{t: t, rootkey: raddr}
 		actor.constructAndVerify(rt)
 
-		emptyMap, err := adt.MakeEmptyMap(rt.AdtStore()).Root()
+		emptyMap, err := adt.StoreEmptyMap(rt.AdtStore(), builtin.DefaultHamtBitwidth)
 		require.NoError(t, err)
 
 		state := actor.state(rt)
@@ -51,7 +46,7 @@ func TestConstruction(t *testing.T) {
 	})
 
 	t.Run("non-ID address root is resolved to an ID address for construction", func(t *testing.T) {
-		rt := runtimeSetup().Build(t)
+		rt := builder.Build(t)
 
 		raddr := tutil.NewBLSAddr(t, 101)
 		rootIdAddr := tutil.NewIDAddr(t, 201)
@@ -60,7 +55,7 @@ func TestConstruction(t *testing.T) {
 		actor := verifRegActorTestHarness{t: t, rootkey: raddr}
 		actor.constructAndVerify(rt)
 
-		emptyMap, err := adt.MakeEmptyMap(rt.AdtStore()).Root()
+		emptyMap, err := adt.StoreEmptyMap(rt.AdtStore(), builtin.DefaultHamtBitwidth)
 		require.NoError(t, err)
 
 		var state verifreg.State
@@ -72,7 +67,7 @@ func TestConstruction(t *testing.T) {
 	})
 
 	t.Run("fails if root cannot be resolved to an ID address", func(t *testing.T) {
-		rt := runtimeSetup().Build(t)
+		rt := builder.Build(t)
 		actor := verifreg.Actor{}
 		rt.ExpectValidateCallerAddr(builtin.SystemActorAddr)
 
@@ -194,7 +189,7 @@ func TestRemoveVerifier(t *testing.T) {
 		rt.ExpectValidateCallerAddr(ac.rootkey)
 		rt.SetCaller(ac.rootkey, builtin.VerifiedRegistryActorCodeID)
 		v := tutil.NewIDAddr(t, 501)
-		rt.ExpectAbort(exitcode.ErrIllegalState, func() {
+		rt.ExpectAbort(exitcode.ErrIllegalArgument, func() {
 			rt.Call(ac.RemoveVerifier, &v)
 		})
 		ac.checkState(rt)
@@ -779,7 +774,7 @@ type verifRegActorTestHarness struct {
 }
 
 func basicVerifRegSetup(t *testing.T, root address.Address) (*mock.Runtime, *verifRegActorTestHarness) {
-	builder := mock.NewBuilder(context.Background(), builtin.StorageMarketActorAddr).
+	builder := mock.NewBuilder(builtin.StorageMarketActorAddr).
 		WithCaller(builtin.SystemActorAddr, builtin.InitActorCodeID).
 		WithActorType(root, builtin.VerifiedRegistryActorCodeID)
 
@@ -916,7 +911,7 @@ func (h *verifRegActorTestHarness) getVerifierCap(rt *mock.Runtime, a address.Ad
 	var st verifreg.State
 	rt.GetState(&st)
 
-	v, err := adt.AsMap(adt.AsStore(rt), st.Verifiers)
+	v, err := adt.AsMap(adt.AsStore(rt), st.Verifiers, builtin.DefaultHamtBitwidth)
 	require.NoError(h.t, err)
 
 	var dc verifreg.DataCap
@@ -930,7 +925,7 @@ func (h *verifRegActorTestHarness) getClientCap(rt *mock.Runtime, a address.Addr
 	var st verifreg.State
 	rt.GetState(&st)
 
-	v, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients)
+	v, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients, builtin.DefaultHamtBitwidth)
 	require.NoError(h.t, err)
 
 	var dc verifreg.DataCap
@@ -944,7 +939,7 @@ func (h *verifRegActorTestHarness) assertVerifierRemoved(rt *mock.Runtime, a add
 	var st verifreg.State
 	rt.GetState(&st)
 
-	v, err := adt.AsMap(adt.AsStore(rt), st.Verifiers)
+	v, err := adt.AsMap(adt.AsStore(rt), st.Verifiers, builtin.DefaultHamtBitwidth)
 	require.NoError(h.t, err)
 
 	var dc verifreg.DataCap
@@ -957,7 +952,7 @@ func (h *verifRegActorTestHarness) assertClientRemoved(rt *mock.Runtime, a addre
 	var st verifreg.State
 	rt.GetState(&st)
 
-	v, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients)
+	v, err := adt.AsMap(adt.AsStore(rt), st.VerifiedClients, builtin.DefaultHamtBitwidth)
 	require.NoError(h.t, err)
 
 	var dc verifreg.DataCap
@@ -973,4 +968,3 @@ func mkVerifierParams(a address.Address, allowance verifreg.DataCap) *verifreg.A
 func mkClientParams(a address.Address, cap verifreg.DataCap) *verifreg.AddVerifiedClientParams {
 	return &verifreg.AddVerifiedClientParams{Address: a, Allowance: cap}
 }
-
