@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v2/support/ipld"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
-	vm "github.com/filecoin-project/specs-actors/v2/support/vm"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v3/support/ipld"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
+	vm "github.com/filecoin-project/specs-actors/v3/support/vm"
 )
 
 var fakeChainRandomness = []byte("not really random")
@@ -34,10 +34,10 @@ func TestCronCatchedCCExpirationsAtDeadlineBoundary(t *testing.T) {
 
 	// create miner
 	params := power.CreateMinerParams{
-		Owner:         worker,
-		Worker:        worker,
-		SealProofType: sealProof,
-		Peer:          abi.PeerID("not really a peer id"),
+		Owner:                worker,
+		Worker:               worker,
+		WindowPoStProofType:  abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
+		Peer:                 abi.PeerID("not really a peer id"),
 	}
 	ret := vm.ApplyOk(t, v, worker, builtin.StoragePowerActorAddr, minerBalance, builtin.MethodsPower.CreateMiner, &params)
 
