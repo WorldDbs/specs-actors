@@ -12,10 +12,9 @@ import (
 	errors "github.com/pkg/errors"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	. "github.com/filecoin-project/specs-actors/v2/actors/util"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/smoothing"
 )
 
 // genesis power in bytes = 750,000 GiB
@@ -23,6 +22,18 @@ var InitialQAPowerEstimatePosition = big.Mul(big.NewInt(750_000), big.NewInt(1<<
 
 // max chain throughput in bytes per epoch = 120 ProveCommits / epoch = 3,840 GiB
 var InitialQAPowerEstimateVelocity = big.Mul(big.NewInt(3_840), big.NewInt(1<<30))
+
+// Bitwidth of CronEventQueue HAMT determined empirically from mutation
+// patterns and projections of mainnet data.
+const CronQueueHamtBitwidth = 6
+
+// Bitwidth of CronEventQueue AMT determined empirically from mutation
+// patterns and projections of mainnet data.
+const CronQueueAmtBitwidth = 6
+
+// Bitwidth of ProofValidationBatch AMT determined empirically from mutation
+// pattersn and projections of mainnet data.
+const ProofValidationBatchAmtBitwidth = 4
 
 type State struct {
 	TotalRawBytePower abi.StoragePower
@@ -59,7 +70,7 @@ type State struct {
 
 type Claim struct {
 	// Miner's proof type used to determine minimum miner size
-	SealProofType abi.RegisteredSealProof
+	WindowPoStProofType abi.RegisteredPoStProof
 
 	// Sum of raw byte power for a miner's sectors.
 	RawBytePower abi.StoragePower
@@ -73,7 +84,16 @@ type CronEvent struct {
 	CallbackPayload []byte
 }
 
-func ConstructState(emptyMapCid, emptyMMapCid cid.Cid) *State {
+func ConstructState(store adt.Store) (*State, error) {
+	emptyClaimsMapCid, err := adt.StoreEmptyMap(store, builtin.DefaultHamtBitwidth)
+	if err != nil {
+		return nil, xerrors.Errorf("failed to create empty map: %w", err)
+	}
+	emptyCronQueueMMapCid, err := adt.StoreEmptyMultimap(store, CronQueueHamtBitwidth, CronQueueAmtBitwidth)
+	if err != nil {
+		return nil, xerrors.Errorf("failed to create empty multimap: %w", err)
+	}
+
 	return &State{
 		TotalRawBytePower:         abi.NewStoragePower(0),
 		TotalBytesCommitted:       abi.NewStoragePower(0),
@@ -85,11 +105,11 @@ func ConstructState(emptyMapCid, emptyMMapCid cid.Cid) *State {
 		ThisEpochPledgeCollateral: abi.NewTokenAmount(0),
 		ThisEpochQAPowerSmoothed:  smoothing.NewEstimate(InitialQAPowerEstimatePosition, InitialQAPowerEstimateVelocity),
 		FirstCronEpoch:            0,
-		CronEventQueue:            emptyMMapCid,
-		Claims:                    emptyMapCid,
+		CronEventQueue:            emptyCronQueueMMapCid,
+		Claims:                    emptyClaimsMapCid,
 		MinerCount:                0,
 		MinerAboveMinPowerCount:   0,
-	}
+	}, nil
 }
 
 // MinerNominalPowerMeetsConsensusMinimum is used to validate Election PoSt
@@ -97,7 +117,7 @@ func ConstructState(emptyMapCid, emptyMMapCid cid.Cid) *State {
 // the miner meets the minimum.  If the network is a below a threshold of
 // miners and has power > zero the miner meets the minimum.
 func (st *State) MinerNominalPowerMeetsConsensusMinimum(s adt.Store, miner addr.Address) (bool, error) { //nolint:deadcode,unused
-	claims, err := adt.AsMap(s, st.Claims)
+	claims, err := adt.AsMap(s, st.Claims, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return false, xerrors.Errorf("failed to load claims: %w", err)
 	}
@@ -111,7 +131,7 @@ func (st *State) MinerNominalPowerMeetsConsensusMinimum(s adt.Store, miner addr.
 	}
 
 	minerNominalPower := claim.RawBytePower
-	minerMinPower, err := builtin.ConsensusMinerMinPower(claim.SealProofType)
+	minerMinPower, err := builtin.ConsensusMinerMinPower(claim.WindowPoStProofType)
 	if err != nil {
 		return false, errors.Wrap(err, "could not get miner min power from proof type")
 	}
@@ -132,7 +152,7 @@ func (st *State) MinerNominalPowerMeetsConsensusMinimum(s adt.Store, miner addr.
 
 // Parameters may be negative to subtract.
 func (st *State) AddToClaim(s adt.Store, miner addr.Address, power abi.StoragePower, qapower abi.StoragePower) error {
-	claims, err := adt.AsMap(s, st.Claims)
+	claims, err := adt.AsMap(s, st.Claims, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return xerrors.Errorf("failed to load claims: %w", err)
 	}
@@ -150,7 +170,7 @@ func (st *State) AddToClaim(s adt.Store, miner addr.Address, power abi.StoragePo
 }
 
 func (st *State) GetClaim(s adt.Store, a addr.Address) (*Claim, bool, error) {
-	claims, err := adt.AsMap(s, st.Claims)
+	claims, err := adt.AsMap(s, st.Claims, builtin.DefaultHamtBitwidth)
 	if err != nil {
 		return nil, false, xerrors.Errorf("failed to load claims: %w", err)
 	}
@@ -171,12 +191,12 @@ func (st *State) addToClaim(claims *adt.Map, miner addr.Address, power abi.Stora
 	st.TotalBytesCommitted = big.Add(st.TotalBytesCommitted, power)
 
 	newClaim := Claim{
-		SealProofType:   oldClaim.SealProofType,
-		RawBytePower:    big.Add(oldClaim.RawBytePower, power),
-		QualityAdjPower: big.Add(oldClaim.QualityAdjPower, qapower),
+		WindowPoStProofType: oldClaim.WindowPoStProofType,
+		RawBytePower:        big.Add(oldClaim.RawBytePower, power),
+		QualityAdjPower:     big.Add(oldClaim.QualityAdjPower, qapower),
 	}
 
-	minPower, err := builtin.ConsensusMinerMinPower(oldClaim.SealProofType)
+	minPower, err := builtin.ConsensusMinerMinPower(oldClaim.WindowPoStProofType)
 	if err != nil {
 		return fmt.Errorf("could not get consensus miner min power: %w", err)
 	}
@@ -200,14 +220,20 @@ func (st *State) addToClaim(claims *adt.Map, miner addr.Address, power abi.Stora
 		st.TotalRawBytePower = big.Add(st.TotalRawBytePower, power)
 	}
 
-	AssertMsg(newClaim.RawBytePower.GreaterThanEqual(big.Zero()), "negative claimed raw byte power: %v", newClaim.RawBytePower)
-	AssertMsg(newClaim.QualityAdjPower.GreaterThanEqual(big.Zero()), "negative claimed quality adjusted power: %v", newClaim.QualityAdjPower)
-	AssertMsg(st.MinerAboveMinPowerCount >= 0, "negative number of miners larger than min: %v", st.MinerAboveMinPowerCount)
+	if newClaim.RawBytePower.LessThan(big.Zero()) {
+		return xerrors.Errorf("negative claimed raw byte power: %v", newClaim.RawBytePower)
+	}
+	if newClaim.QualityAdjPower.LessThan(big.Zero()) {
+		return xerrors.Errorf("negative claimed quality adjusted power: %v", newClaim.QualityAdjPower)
+	}
+	if st.MinerAboveMinPowerCount < 0 {
+		return xerrors.Errorf("negative number of miners larger than min: %v", st.MinerAboveMinPowerCount)
+	}
 	return setClaim(claims, miner, &newClaim)
 }
 
-func (st *State) updateStatsForNewMiner(sealProof abi.RegisteredSealProof) error {
-	minPower, err := builtin.ConsensusMinerMinPower(sealProof)
+func (st *State) updateStatsForNewMiner(windowPoStProof abi.RegisteredPoStProof) error {
+	minPower, err := builtin.ConsensusMinerMinPower(windowPoStProof)
 	if err != nil {
 		return fmt.Errorf("could not get consensus miner min power: %w", err)
 	}
@@ -218,23 +244,25 @@ func (st *State) updateStatsForNewMiner(sealProof abi.RegisteredSealProof) error
 	return nil
 }
 
-func (st *State) deleteClaim(claims *adt.Map, miner addr.Address) error {
+func (st *State) deleteClaim(claims *adt.Map, miner addr.Address) (bool, error) {
+	// Note: this flow loads the claim multiple times, unnecessarily.
+	// We should refactor to use claims.Pop().
 	oldClaim, ok, err := getClaim(claims, miner)
 	if err != nil {
-		return fmt.Errorf("failed to get claim: %w", err)
+		return false, fmt.Errorf("failed to get claim: %w", err)
 	}
 	if !ok {
-		return nil // no record, we're done
+		return false, nil // no record, we're done
 	}
 
 	// subtract from stats as if we were simply removing power
 	err = st.addToClaim(claims, miner, oldClaim.RawBytePower.Neg(), oldClaim.QualityAdjPower.Neg())
 	if err != nil {
-		return fmt.Errorf("failed to subtract miner power before deleting claim: %w", err)
+		return false, fmt.Errorf("failed to subtract miner power before deleting claim: %w", err)
 	}
 
 	// delete claim from state to invalidate miner
-	return claims.Delete(abi.AddrKey(miner))
+	return true, claims.Delete(abi.AddrKey(miner))
 }
 
 func getClaim(claims *adt.Map, a addr.Address) (*Claim, bool, error) {
@@ -251,7 +279,6 @@ func getClaim(claims *adt.Map, a addr.Address) (*Claim, bool, error) {
 
 func (st *State) addPledgeTotal(amount abi.TokenAmount) {
 	st.TotalPledgeCollateral = big.Add(st.TotalPledgeCollateral, amount)
-	AssertMsg(st.TotalPledgeCollateral.GreaterThanEqual(big.Zero()), "pledged amount cannot be negative")
 }
 
 func (st *State) appendCronEvent(events *adt.Multimap, epoch abi.ChainEpoch, event *CronEvent) error {
@@ -283,13 +310,15 @@ func loadCronEvents(mmap *adt.Multimap, epoch abi.ChainEpoch) ([]CronEvent, erro
 }
 
 func setClaim(claims *adt.Map, a addr.Address, claim *Claim) error {
-	Assert(claim.RawBytePower.GreaterThanEqual(big.Zero()))
-	Assert(claim.QualityAdjPower.GreaterThanEqual(big.Zero()))
-
+	if claim.RawBytePower.LessThan(big.Zero()) {
+		return xerrors.Errorf("negative claim raw power %v", claim.RawBytePower)
+	}
+	if claim.QualityAdjPower.LessThan(big.Zero()) {
+		return xerrors.Errorf("negative claim quality-adjusted power %v", claim.QualityAdjPower)
+	}
 	if err := claims.Put(abi.AddrKey(a), claim); err != nil {
 		return xerrors.Errorf("failed to put claim with address %s power %v: %w", a, claim, err)
 	}
-
 	return nil
 }
 
