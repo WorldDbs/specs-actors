@@ -1,7 +1,6 @@
 package init_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -12,11 +11,11 @@ import (
 	cid "github.com/ipfs/go-cid"
 	assert "github.com/stretchr/testify/assert"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	init_ "github.com/filecoin-project/specs-actors/v2/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	init_ "github.com/filecoin-project/specs-actors/v3/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestExports(t *testing.T) {
@@ -27,7 +26,7 @@ func TestConstructor(t *testing.T) {
 	actor := initHarness{init_.Actor{}, t}
 
 	receiver := tutil.NewIDAddr(t, 1000)
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 	rt := builder.Build(t)
 	actor.constructAndVerify(rt)
 	actor.checkState(rt)
@@ -38,7 +37,7 @@ func TestExec(t *testing.T) {
 
 	receiver := tutil.NewIDAddr(t, 1000)
 	anne := tutil.NewIDAddr(t, 1001)
-	builder := mock.NewBuilder(context.Background(), receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
+	builder := mock.NewBuilder(receiver).WithCaller(builtin.SystemActorAddr, builtin.SystemActorCodeID)
 
 	t.Run("abort actors that cannot call exec", func(t *testing.T) {
 		rt := builder.Build(t)
@@ -238,7 +237,7 @@ func (h *initHarness) constructAndVerify(rt *mock.Runtime) {
 
 	var st init_.State
 	rt.GetState(&st)
-	emptyMap, err := adt.AsMap(adt.AsStore(rt), st.AddressMap)
+	emptyMap, err := adt.AsMap(adt.AsStore(rt), st.AddressMap, builtin.DefaultHamtBitwidth)
 	assert.NoError(h.t, err)
 	assert.Equal(h.t, tutil.MustRoot(h.t, emptyMap), st.AddressMap)
 	assert.Equal(h.t, abi.ActorID(builtin.FirstNonSingletonActorId), st.NextID)
