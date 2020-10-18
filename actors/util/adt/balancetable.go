@@ -8,13 +8,17 @@ import (
 	"golang.org/x/xerrors"
 )
 
+// Bitwidth of balance table HAMTs, determined empirically from mutation
+// patterns and projections of mainnet data
+const BalanceTableBitwidth = 6
+
 // A specialization of a map of addresses to (positive) token amounts.
 // Absent keys implicitly have a balance of zero.
 type BalanceTable Map
 
 // Interprets a store as balance table with root `r`.
 func AsBalanceTable(s Store, r cid.Cid) (*BalanceTable, error) {
-	m, err := AsMap(s, r)
+	m, err := AsMap(s, r, BalanceTableBitwidth)
 	if err != nil {
 		return nil, err
 	}
