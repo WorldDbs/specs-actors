@@ -2,7 +2,6 @@ package market_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"errors"
 	"strings"
@@ -17,15 +16,15 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbg "github.com/whyrusleeping/cbor-gen"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,11 +45,12 @@ func TestExports(t *testing.T) {
 
 func TestRemoveAllError(t *testing.T) {
 	marketActor := tutil.NewIDAddr(t, 100)
-	builder := mock.NewBuilder(context.Background(), marketActor)
+	builder := mock.NewBuilder(marketActor)
 	rt := builder.Build(t)
 	store := adt.AsStore(rt)
 
-	smm := market.MakeEmptySetMultimap(store)
+	smm, err := market.MakeEmptySetMultimap(store, builtin.DefaultHamtBitwidth)
+	require.NoError(t, err)
 
 	if err := smm.RemoveAll(42); err != nil {
 		t.Fatalf("expected no error, got: %s", err)
@@ -62,14 +62,14 @@ func TestMarketActor(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	minerAddrs := &minerAddrs{owner, worker, provider}
+	minerAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	var st market.State
 
 	t.Run("simple construction", func(t *testing.T) {
 		actor := market.Actor{}
 		receiver := tutil.NewIDAddr(t, 100)
-		builder := mock.NewBuilder(context.Background(), receiver).
+		builder := mock.NewBuilder(receiver).
 			WithCaller(builtin.SystemActorAddr, builtin.InitActorCodeID)
 
 		rt := builder.Build(t)
@@ -82,22 +82,29 @@ func TestMarketActor(t *testing.T) {
 
 		store := adt.AsStore(rt)
 
-		emptyMap, err := adt.MakeEmptyMap(store).Root()
+		emptyBalanceTable, err := adt.StoreEmptyMap(store, adt.BalanceTableBitwidth)
 		assert.NoError(t, err)
 
-		emptyArray, err := adt.MakeEmptyArray(store).Root()
+		emptyMap, err := adt.StoreEmptyMap(store, builtin.DefaultHamtBitwidth)
 		assert.NoError(t, err)
 
-		emptyMultiMap, err := market.MakeEmptySetMultimap(store).Root()
+		emptyProposalsArrayCid, err := adt.StoreEmptyArray(store, market.ProposalsAmtBitwidth)
+		assert.NoError(t, err)
+
+		emptyStatesArrayCid, err := adt.StoreEmptyArray(store, market.StatesAmtBitwidth)
+		assert.NoError(t, err)
+
+		emptyMultiMap, err := market.StoreEmptySetMultimap(store, builtin.DefaultHamtBitwidth)
 		assert.NoError(t, err)
 
 		var state market.State
 		rt.GetState(&state)
 
-		assert.Equal(t, emptyArray, state.Proposals)
-		assert.Equal(t, emptyArray, state.States)
-		assert.Equal(t, emptyMap, state.EscrowTable)
-		assert.Equal(t, emptyMap, state.LockedTable)
+		assert.Equal(t, emptyProposalsArrayCid, state.Proposals)
+		assert.Equal(t, emptyStatesArrayCid, state.States)
+		assert.Equal(t, emptyMap, state.PendingProposals)
+		assert.Equal(t, emptyBalanceTable, state.EscrowTable)
+		assert.Equal(t, emptyBalanceTable, state.LockedTable)
 		assert.Equal(t, abi.DealID(0), state.NextID)
 		assert.Equal(t, emptyMultiMap, state.DealOpsByEpoch)
 		assert.Equal(t, abi.ChainEpoch(-1), state.LastCron)
@@ -122,7 +129,7 @@ func TestMarketActor(t *testing.T) {
 					rt.SetCaller(callerAddr, builtin.AccountActorCodeID)
 					rt.SetReceived(abi.NewTokenAmount(tc.delta))
 					rt.ExpectValidateCallerType(builtin.CallerTypesSignable...)
-					actor.expectProviderControlAddresses(rt, provider, owner, worker)
+					expectGetControlAddresses(rt, provider, owner, worker)
 
 					rt.Call(actor.AddBalance, &provider)
 
@@ -262,7 +269,7 @@ func TestMarketActor(t *testing.T) {
 
 			// caller is not owner or worker
 			rt.SetCaller(tutil.NewIDAddr(t, 909), builtin.AccountActorCodeID)
-			actor.expectProviderControlAddresses(rt, provider, owner, worker)
+			expectGetControlAddresses(rt, provider, owner, worker)
 
 			rt.ExpectAbort(exitcode.SysErrForbidden, func() {
 				rt.Call(actor.WithdrawBalance, &params)
@@ -413,10 +420,32 @@ func TestPublishStorageDeals(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
+	control := tutil.NewIDAddr(t, 200)
 	startEpoch := abi.ChainEpoch(42)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
-	mAddr := &minerAddrs{owner, worker, provider}
+	mAddr := &minerAddrs{owner, worker, provider, []address.Address{control}}
 	var st market.State
+
+	t.Run("simple deal", func(t *testing.T) {
+		startEpoch := abi.ChainEpoch(1000)
+		endEpoch := startEpoch + 200*builtin.EpochsInDay
+		publishEpoch := abi.ChainEpoch(1)
+
+		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
+		rt.SetEpoch(publishEpoch)
+
+		// Publish from miner worker.
+		deal1 := actor.generateDealAndAddFunds(rt, client, mAddr, startEpoch, endEpoch)
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
+		_ = actor.publishDeals(rt, mAddr, publishDealReq{deal: deal1})
+
+		// Publish from miner control address.
+		deal2 := actor.generateDealAndAddFunds(rt, client, mAddr, startEpoch+1, endEpoch+1)
+		rt.SetCaller(control, builtin.AccountActorCodeID)
+		_ = actor.publishDeals(rt, mAddr, publishDealReq{deal: deal2})
+
+		actor.checkState(rt)
+	})
 
 	t.Run("provider and client addresses are resolved before persisting state and sent to VerigReg actor for a verified deal", func(t *testing.T) {
 		// provider addresses
@@ -425,7 +454,7 @@ func TestPublishStorageDeals(t *testing.T) {
 		// client addresses
 		clientBls := tutil.NewBLSAddr(t, 900)
 		clientResolved := tutil.NewIDAddr(t, 333)
-		mAddr := &minerAddrs{owner, worker, providerBls}
+		mAddr := &minerAddrs{owner, worker, providerBls, nil}
 
 		rt, actor := basicMarketSetup(t, owner, providerResolved, worker, clientResolved)
 		// mappings for resolving address
@@ -446,8 +475,7 @@ func TestPublishStorageDeals(t *testing.T) {
 		rt.SetReceived(deal.ProviderCollateral)
 		rt.SetCaller(mAddr.owner, builtin.AccountActorCodeID)
 		rt.ExpectValidateCallerType(builtin.CallerTypesSignable...)
-		// request for miner control addresses will be sent to the resolved provider address
-		actor.expectProviderControlAddresses(rt, providerResolved, mAddr.owner, mAddr.worker)
+		expectGetControlAddresses(rt, providerResolved, mAddr.owner, mAddr.worker)
 		rt.Call(actor.AddBalance, &mAddr.provider)
 		rt.Verify()
 		rt.SetBalance(big.Add(rt.Balance(), deal.ProviderCollateral))
@@ -456,14 +484,7 @@ func TestPublishStorageDeals(t *testing.T) {
 		// publish deal using the BLS addresses
 		rt.SetCaller(mAddr.worker, builtin.AccountActorCodeID)
 		rt.ExpectValidateCallerType(builtin.CallerTypesSignable...)
-		rt.ExpectSend(
-			providerResolved,
-			builtin.MethodsMiner.ControlAddresses,
-			nil,
-			big.Zero(),
-			&miner.GetControlAddressesReturn{Owner: mAddr.owner, Worker: mAddr.worker},
-			exitcode.Ok,
-		)
+		expectGetControlAddresses(rt, providerResolved, mAddr.owner, mAddr.worker)
 		expectQueryNetworkInfo(rt, actor)
 		//  create a client proposal with a valid signature
 		var params market.PublishStorageDealsParams
@@ -544,6 +565,7 @@ func TestPublishStorageDeals(t *testing.T) {
 
 		// publish the deal successfully
 		rt.SetEpoch(publishEpoch)
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, mAddr, publishDealReq{deal: deal})
 
 		actor.checkState(rt)
@@ -564,6 +586,7 @@ func TestPublishStorageDeals(t *testing.T) {
 		// generate third deal
 		deal3 := actor.generateDealAndAddFunds(rt, client3, mAddr, startEpoch, endEpoch)
 
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, mAddr, publishDealReq{deal: deal1}, publishDealReq{deal: deal2},
 			publishDealReq{deal: deal3})
 
@@ -588,6 +611,7 @@ func TestPublishStorageDeals(t *testing.T) {
 		// publish two more deals for same clients with same provider
 		deal4 := actor.generateDealAndAddFunds(rt, client3, mAddr, abi.ChainEpoch(1000), abi.ChainEpoch(1000+200*builtin.EpochsInDay))
 		deal5 := actor.generateDealAndAddFunds(rt, client3, mAddr, abi.ChainEpoch(100), abi.ChainEpoch(100+200*builtin.EpochsInDay))
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, mAddr, publishDealReq{deal: deal4}, publishDealReq{deal: deal5})
 
 		// assert locked balances for clients and provider
@@ -613,7 +637,7 @@ func TestPublishStorageDeals(t *testing.T) {
 
 		// PUBLISH DEALS with a different provider
 		provider2 := tutil.NewIDAddr(t, 109)
-		miner := &minerAddrs{owner, worker, provider2}
+		miner := &minerAddrs{owner, worker, provider2, nil}
 
 		// generate first deal for second provider
 		deal6 := actor.generateDealAndAddFunds(rt, client1, miner, abi.ChainEpoch(20), abi.ChainEpoch(20+200*builtin.EpochsInDay))
@@ -622,6 +646,7 @@ func TestPublishStorageDeals(t *testing.T) {
 		deal7 := actor.generateDealAndAddFunds(rt, client1, miner, abi.ChainEpoch(25), abi.ChainEpoch(60+200*builtin.EpochsInDay))
 
 		// publish both the deals for the second provider
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, miner, publishDealReq{deal: deal6}, publishDealReq{deal: deal7})
 
 		// assertions
@@ -649,7 +674,7 @@ func TestPublishStorageDealsFailures(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	currentEpoch := abi.ChainEpoch(5)
 	startEpoch := abi.ChainEpoch(10)
@@ -873,7 +898,7 @@ func TestPublishStorageDealsFailures(t *testing.T) {
 		t.Run("fail when deals have different providers", func(t *testing.T) {
 			rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 			deal1 := actor.generateDealAndAddFunds(rt, client, mAddrs, startEpoch, endEpoch)
-			m2 := &minerAddrs{owner, worker, tutil.NewIDAddr(t, 1000)}
+			m2 := &minerAddrs{owner, worker, tutil.NewIDAddr(t, 1000), nil}
 
 			deal2 := actor.generateDealAndAddFunds(rt, client, m2, abi.ChainEpoch(1), endEpoch)
 
@@ -976,7 +1001,7 @@ func TestActivateDeals(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	startEpoch := abi.ChainEpoch(10)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -1019,7 +1044,7 @@ func TestActivateDealFailures(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	startEpoch := abi.ChainEpoch(10)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -1030,7 +1055,7 @@ func TestActivateDealFailures(t *testing.T) {
 		t.Run("fail when caller is not the provider of the deal", func(t *testing.T) {
 			rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 			provider2 := tutil.NewIDAddr(t, 201)
-			mAddrs2 := &minerAddrs{owner, worker, provider2}
+			mAddrs2 := &minerAddrs{owner, worker, provider2, nil}
 			dealId := actor.generateAndPublishDeal(rt, client, mAddrs2, startEpoch, endEpoch, startEpoch)
 
 			params := mkActivateDealParams(sectorExpiry, dealId)
@@ -1169,7 +1194,7 @@ func TestOnMinerSectorsTerminate(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	startEpoch := abi.ChainEpoch(10)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -1188,7 +1213,7 @@ func TestOnMinerSectorsTerminate(t *testing.T) {
 
 		// provider2 publishes deal4 and deal5
 		provider2 := tutil.NewIDAddr(t, 501)
-		maddrs2 := &minerAddrs{owner, worker, provider2}
+		maddrs2 := &minerAddrs{owner, worker, provider2, nil}
 		dealId4 := actor.generateAndPublishDeal(rt, client, maddrs2, startEpoch, endEpoch, startEpoch)
 		dealId5 := actor.generateAndPublishDeal(rt, client, maddrs2, startEpoch, endEpoch+1, startEpoch)
 		actor.activateDeals(rt, sectorExpiry, provider2, currentEpoch, dealId4, dealId5)
@@ -1349,7 +1374,7 @@ func TestOnMinerSectorsTerminate(t *testing.T) {
 		provider2 := tutil.NewIDAddr(t, 501)
 		rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 		rt.SetCaller(provider2, builtin.StorageMinerActorCodeID)
-		rt.ExpectAssertionFailure("caller is not the provider of the deal", func() {
+		rt.ExpectAbortContainsMessage(exitcode.ErrIllegalState, "caller t0501 is not the provider t0102 of deal 0", func() {
 			rt.Call(actor.OnMinerSectorsTerminate, params)
 		})
 
@@ -1406,7 +1431,7 @@ func TestCronTick(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	startEpoch := abi.ChainEpoch(50)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -1441,7 +1466,7 @@ func TestCronTick(t *testing.T) {
 		// set current epoch of the deal to the end epoch so it's picked up for "processing" in the next cron tick.
 		rt.SetEpoch(endEpoch)
 
-		rt.ExpectAssertionFailure("assertion failed", func() {
+		rt.ExpectAbort(exitcode.ErrIllegalState, func() {
 			actor.cronTick(rt)
 		})
 	})
@@ -1514,6 +1539,7 @@ func TestCronTick(t *testing.T) {
 		actor.activateDeals(rt, sectorExpiry, provider, d1.StartEpoch-1, dealId1)
 		rt.SetEpoch(d1.StartEpoch)
 		actor.cronTick(rt)
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, mAddrs, publishDealReq{deal: d2})
 
 		actor.checkState(rt)
@@ -1525,7 +1551,7 @@ func TestRandomCronEpochDuringPublish(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	startEpoch := abi.ChainEpoch(50)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -1657,9 +1683,9 @@ func TestLockedFundTrackingStates(t *testing.T) {
 	c2 := tutil.NewIDAddr(t, 105)
 	c3 := tutil.NewIDAddr(t, 106)
 
-	m1 := &minerAddrs{owner, worker, p1}
-	m2 := &minerAddrs{owner, worker, p2}
-	m3 := &minerAddrs{owner, worker, p3}
+	m1 := &minerAddrs{owner, worker, p1, nil}
+	m2 := &minerAddrs{owner, worker, p2, nil}
+	m3 := &minerAddrs{owner, worker, p3, nil}
 
 	startEpoch := abi.ChainEpoch(50)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -1745,7 +1771,7 @@ func TestCronTickTimedoutDeals(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	startEpoch := abi.ChainEpoch(50)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -1815,6 +1841,7 @@ func TestCronTickTimedoutDeals(t *testing.T) {
 		deal3 := actor.generateDealAndAddFunds(rt, client, mAddrs, startEpoch, endEpoch+2)
 
 		//  publishing verified deals
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		dealIds := actor.publishDeals(rt, mAddrs, publishDealReq{deal1, startEpoch},
 			publishDealReq{deal2, startEpoch}, publishDealReq{deal3, startEpoch})
 
@@ -1858,7 +1885,7 @@ func TestCronTickDealExpiry(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	startEpoch := abi.ChainEpoch(50)
 	endEpoch := startEpoch + 200*builtin.EpochsInDay
@@ -2021,7 +2048,7 @@ func TestCronTickDealSlashing(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 	sectorExpiry := abi.ChainEpoch(400 + 200*builtin.EpochsInDay)
 
 	// hairy edge cases
@@ -2326,7 +2353,7 @@ func TestMarketActorDeals(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	minerAddrs := &minerAddrs{owner, worker, provider}
+	minerAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	var st market.State
 
@@ -2343,6 +2370,7 @@ func TestMarketActorDeals(t *testing.T) {
 
 	// First attempt at publishing the deal should work
 	{
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, minerAddrs, publishDealReq{deal: dealProposal})
 	}
 
@@ -2364,6 +2392,7 @@ func TestMarketActorDeals(t *testing.T) {
 
 	// Same deal with a different label should work
 	{
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, minerAddrs, publishDealReq{deal: dealProposal})
 	}
 	actor.checkState(rt)
@@ -2374,7 +2403,7 @@ func TestMaxDealLabelSize(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	minerAddrs := &minerAddrs{owner, worker, provider}
+	minerAddrs := &minerAddrs{owner, worker, provider, nil}
 
 	var st market.State
 
@@ -2392,6 +2421,7 @@ func TestMaxDealLabelSize(t *testing.T) {
 
 	// Label at max size should work.
 	{
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		actor.publishDeals(rt, minerAddrs, publishDealReq{deal: dealProposal})
 	}
 
@@ -2418,7 +2448,7 @@ func TestComputeDataCommitment(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 	start := abi.ChainEpoch(10)
 	end := start + 200*builtin.EpochsInDay
 
@@ -2484,8 +2514,7 @@ func TestVerifyDealsForActivation(t *testing.T) {
 	provider := tutil.NewIDAddr(t, 102)
 	worker := tutil.NewIDAddr(t, 103)
 	client := tutil.NewIDAddr(t, 104)
-	mAddrs := &minerAddrs{owner, worker, provider}
-	sectorStart := abi.ChainEpoch(1)
+	mAddrs := &minerAddrs{owner, worker, provider, nil}
 	start := abi.ChainEpoch(10)
 	end := start + 200*builtin.EpochsInDay
 	sectorExpiry := end + 200
@@ -2495,9 +2524,12 @@ func TestVerifyDealsForActivation(t *testing.T) {
 		dealId := actor.generateAndPublishDeal(rt, client, mAddrs, start, end, start)
 		d := actor.getDealProposal(rt, dealId)
 
-		resp := actor.verifyDealsForActivation(rt, provider, sectorStart, sectorExpiry, dealId)
-		require.EqualValues(t, big.Zero(), resp.VerifiedDealWeight)
-		require.EqualValues(t, market.DealWeight(d), resp.DealWeight)
+		resp := actor.verifyDealsForActivation(rt, provider, []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      []abi.DealID{dealId},
+		}})
+		require.EqualValues(t, big.Zero(), resp.Sectors[0].VerifiedDealWeight)
+		require.EqualValues(t, market.DealWeight(d), resp.Sectors[0].DealWeight)
 
 		actor.checkState(rt)
 	})
@@ -2506,11 +2538,15 @@ func TestVerifyDealsForActivation(t *testing.T) {
 		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 		deal := actor.generateDealAndAddFunds(rt, client, mAddrs, start, end)
 		deal.VerifiedDeal = true
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		dealIds := actor.publishDeals(rt, mAddrs, publishDealReq{deal: deal})
 
-		resp := actor.verifyDealsForActivation(rt, provider, sectorStart, sectorExpiry, dealIds...)
-		require.EqualValues(t, market.DealWeight(&deal), resp.VerifiedDealWeight)
-		require.EqualValues(t, big.Zero(), resp.DealWeight)
+		resp := actor.verifyDealsForActivation(rt, provider, []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      dealIds,
+		}})
+		require.EqualValues(t, market.DealWeight(&deal), resp.Sectors[0].VerifiedDealWeight)
+		require.EqualValues(t, big.Zero(), resp.Sectors[0].DealWeight)
 
 		actor.checkState(rt)
 	})
@@ -2527,15 +2563,19 @@ func TestVerifyDealsForActivation(t *testing.T) {
 		d1 := actor.generateDealAndAddFunds(rt, client, mAddrs, start, end+2)
 		d2 := actor.generateDealAndAddFunds(rt, client, mAddrs, start, end+3)
 
+		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		dealIds := actor.publishDeals(rt, mAddrs, publishDealReq{deal: vd1}, publishDealReq{deal: vd2},
 			publishDealReq{deal: d1}, publishDealReq{deal: d2})
 
-		resp := actor.verifyDealsForActivation(rt, provider, sectorStart, sectorExpiry, dealIds...)
+		resp := actor.verifyDealsForActivation(rt, provider, []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      dealIds,
+		}})
 
 		verifiedWeight := big.Add(market.DealWeight(&vd1), market.DealWeight(&vd2))
 		nvweight := big.Add(market.DealWeight(&d1), market.DealWeight(&d2))
-		require.EqualValues(t, verifiedWeight, resp.VerifiedDealWeight)
-		require.EqualValues(t, nvweight, resp.DealWeight)
+		require.EqualValues(t, verifiedWeight, resp.Sectors[0].VerifiedDealWeight)
+		require.EqualValues(t, nvweight, resp.Sectors[0].DealWeight)
 
 		actor.checkState(rt)
 	})
@@ -2544,7 +2584,10 @@ func TestVerifyDealsForActivation(t *testing.T) {
 		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 		dealId := actor.generateAndPublishDeal(rt, client, mAddrs, start, end, start)
 
-		param := &market.VerifyDealsForActivationParams{DealIDs: []abi.DealID{dealId}, SectorStart: sectorStart, SectorExpiry: sectorExpiry}
+		param := &market.VerifyDealsForActivationParams{Sectors: []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      []abi.DealID{dealId},
+		}}}
 		rt.SetCaller(worker, builtin.AccountActorCodeID)
 		rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 		rt.ExpectAbort(exitcode.SysErrForbidden, func() {
@@ -2555,7 +2598,10 @@ func TestVerifyDealsForActivation(t *testing.T) {
 
 	t.Run("fail when deal proposal is not found", func(t *testing.T) {
 		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
-		param := &market.VerifyDealsForActivationParams{DealIDs: []abi.DealID{1}, SectorStart: sectorStart, SectorExpiry: sectorExpiry}
+		param := &market.VerifyDealsForActivationParams{Sectors: []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      []abi.DealID{1},
+		}}}
 		rt.SetCaller(provider, builtin.StorageMinerActorCodeID)
 		rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 		rt.ExpectAbort(exitcode.ErrNotFound, func() {
@@ -2567,11 +2613,13 @@ func TestVerifyDealsForActivation(t *testing.T) {
 	t.Run("fail when caller is not the provider", func(t *testing.T) {
 		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 		dealId := actor.generateAndPublishDeal(rt, client, mAddrs, start, end, start)
-		param := &market.VerifyDealsForActivationParams{DealIDs: []abi.DealID{dealId}, SectorStart: sectorStart, SectorExpiry: sectorExpiry}
 
+		param := &market.VerifyDealsForActivationParams{Sectors: []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      []abi.DealID{dealId},
+		}}}
 		provider2 := tutil.NewIDAddr(t, 205)
 		rt.SetCaller(provider2, builtin.StorageMinerActorCodeID)
-
 		rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 		rt.ExpectAbort(exitcode.ErrForbidden, func() {
 			rt.Call(actor.VerifyDealsForActivation, param)
@@ -2579,11 +2627,15 @@ func TestVerifyDealsForActivation(t *testing.T) {
 		actor.checkState(rt)
 	})
 
-	t.Run("fail when sector start epoch is greater than proposal start epoch", func(t *testing.T) {
+	t.Run("fail when current epoch is greater than proposal start epoch", func(t *testing.T) {
 		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 		dealId := actor.generateAndPublishDeal(rt, client, mAddrs, start, end, start)
-		param := &market.VerifyDealsForActivationParams{DealIDs: []abi.DealID{dealId}, SectorStart: start + 1, SectorExpiry: sectorExpiry}
 
+		rt.SetEpoch(start + 1)
+		param := &market.VerifyDealsForActivationParams{Sectors: []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      []abi.DealID{dealId},
+		}}}
 		rt.SetCaller(provider, builtin.StorageMinerActorCodeID)
 		rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 		rt.ExpectAbort(exitcode.ErrIllegalArgument, func() {
@@ -2595,8 +2647,11 @@ func TestVerifyDealsForActivation(t *testing.T) {
 	t.Run("fail when deal end epoch is greater than sector expiration", func(t *testing.T) {
 		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 		dealId := actor.generateAndPublishDeal(rt, client, mAddrs, start, end, start)
-		param := &market.VerifyDealsForActivationParams{DealIDs: []abi.DealID{dealId}, SectorStart: start, SectorExpiry: end - 1}
 
+		param := &market.VerifyDealsForActivationParams{Sectors: []market.SectorDeals{{
+			SectorExpiry: end - 1,
+			DealIDs:      []abi.DealID{dealId},
+		}}}
 		rt.SetCaller(provider, builtin.StorageMinerActorCodeID)
 		rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 		rt.ExpectAbort(exitcode.ErrIllegalArgument, func() {
@@ -2609,7 +2664,10 @@ func TestVerifyDealsForActivation(t *testing.T) {
 		rt, actor := basicMarketSetup(t, owner, provider, worker, client)
 		dealId := actor.generateAndPublishDeal(rt, client, mAddrs, start, end, start)
 
-		param := &market.VerifyDealsForActivationParams{DealIDs: []abi.DealID{dealId, dealId}, SectorStart: sectorStart, SectorExpiry: sectorExpiry}
+		param := &market.VerifyDealsForActivationParams{Sectors: []market.SectorDeals{{
+			SectorExpiry: sectorExpiry,
+			DealIDs:      []abi.DealID{dealId, dealId},
+		}}}
 		rt.SetCaller(provider, builtin.StorageMinerActorCodeID)
 		rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 		rt.ExpectAbortContainsMessage(exitcode.ErrIllegalArgument, "multiple times", func() {
@@ -2635,8 +2693,8 @@ func (h *marketActorTestHarness) constructAndVerify(rt *mock.Runtime) {
 }
 
 func (h *marketActorTestHarness) verifyDealsForActivation(rt *mock.Runtime, provider address.Address,
-	sectorStart, sectorExpiry abi.ChainEpoch, dealIds ...abi.DealID) *market.VerifyDealsForActivationReturn {
-	param := &market.VerifyDealsForActivationParams{DealIDs: dealIds, SectorStart: sectorStart, SectorExpiry: sectorExpiry}
+	sectorDeals []market.SectorDeals) *market.VerifyDealsForActivationReturn {
+	param := &market.VerifyDealsForActivationParams{Sectors: sectorDeals}
 	rt.ExpectValidateCallerType(builtin.StorageMinerActorCodeID)
 	rt.SetCaller(provider, builtin.StorageMinerActorCodeID)
 
@@ -2653,6 +2711,7 @@ type minerAddrs struct {
 	owner    address.Address
 	worker   address.Address
 	provider address.Address
+	control  []address.Address
 }
 
 // addProviderFunds is a helper method to setup provider market funds
@@ -2662,7 +2721,7 @@ func (h *marketActorTestHarness) addProviderFunds(rt *mock.Runtime, amount abi.T
 	rt.SetCaller(minerAddrs.owner, builtin.AccountActorCodeID)
 	rt.ExpectValidateCallerType(builtin.CallerTypesSignable...)
 
-	h.expectProviderControlAddresses(rt, minerAddrs.provider, minerAddrs.owner, minerAddrs.worker)
+	expectGetControlAddresses(rt, minerAddrs.provider, minerAddrs.owner, minerAddrs.worker)
 
 	rt.Call(h.AddBalance, &minerAddrs.provider)
 
@@ -2684,23 +2743,10 @@ func (h *marketActorTestHarness) addParticipantFunds(rt *mock.Runtime, addr addr
 	rt.SetBalance(big.Add(rt.Balance(), amount))
 }
 
-func (h *marketActorTestHarness) expectProviderControlAddresses(rt *mock.Runtime, provider address.Address, owner address.Address, worker address.Address) {
-	expectRet := &miner.GetControlAddressesReturn{Owner: owner, Worker: worker}
-
-	rt.ExpectSend(
-		provider,
-		builtin.MethodsMiner.ControlAddresses,
-		nil,
-		big.Zero(),
-		expectRet,
-		exitcode.Ok,
-	)
-}
-
 func (h *marketActorTestHarness) withdrawProviderBalance(rt *mock.Runtime, withDrawAmt, expectedSend abi.TokenAmount, miner *minerAddrs) {
 	rt.SetCaller(miner.worker, builtin.AccountActorCodeID)
 	rt.ExpectValidateCallerAddr(miner.owner, miner.worker)
-	h.expectProviderControlAddresses(rt, miner.provider, miner.owner, miner.worker)
+	expectGetControlAddresses(rt, miner.provider, miner.owner, miner.worker)
 
 	params := market.WithdrawBalanceParams{
 		ProviderOrClientAddress: miner.provider,
@@ -2837,14 +2883,13 @@ func (h *marketActorTestHarness) publishDeals(rt *mock.Runtime, minerAddrs *mine
 		h.expectGetRandom(rt, &pdr.deal, pdr.requiredProcessEpoch)
 	}
 
-	rt.SetCaller(minerAddrs.worker, builtin.AccountActorCodeID)
 	rt.ExpectValidateCallerType(builtin.CallerTypesSignable...)
 	rt.ExpectSend(
 		minerAddrs.provider,
 		builtin.MethodsMiner.ControlAddresses,
 		nil,
 		big.Zero(),
-		&miner.GetControlAddressesReturn{Owner: minerAddrs.owner, Worker: minerAddrs.worker},
+		&miner.GetControlAddressesReturn{Owner: minerAddrs.owner, Worker: minerAddrs.worker, ControlAddrs: minerAddrs.control},
 		exitcode.Ok,
 	)
 	expectQueryNetworkInfo(rt, h)
@@ -3032,7 +3077,7 @@ func (h *marketActorTestHarness) assertDealDeleted(rt *mock.Runtime, dealId abi.
 
 	pcid, err := p.Cid()
 	require.NoError(h.t, err)
-	pending, err := adt.AsMap(adt.AsStore(rt), st.PendingProposals)
+	pending, err := adt.AsMap(adt.AsStore(rt), st.PendingProposals, builtin.DefaultHamtBitwidth)
 	require.NoError(h.t, err)
 	found, err = pending.Get(abi.CidKey(pcid), nil)
 	require.NoError(h.t, err)
@@ -3067,6 +3112,7 @@ func (h *marketActorTestHarness) terminateDeals(rt *mock.Runtime, minerAddr addr
 func (h *marketActorTestHarness) publishAndActivateDeal(rt *mock.Runtime, client address.Address, minerAddrs *minerAddrs,
 	startEpoch, endEpoch, currentEpoch, sectorExpiry abi.ChainEpoch, requiredProcessEpoch abi.ChainEpoch) abi.DealID {
 	deal := h.generateDealAndAddFunds(rt, client, minerAddrs, startEpoch, endEpoch)
+	rt.SetCaller(minerAddrs.worker, builtin.AccountActorCodeID)
 	dealIds := h.publishDeals(rt, minerAddrs, publishDealReq{deal: deal, requiredProcessEpoch: requiredProcessEpoch})
 	h.activateDeals(rt, sectorExpiry, minerAddrs.provider, currentEpoch, dealIds[0])
 	return dealIds[0]
@@ -3094,7 +3140,7 @@ func (h *marketActorTestHarness) deleteDealProposal(rt *mock.Runtime, dealId abi
 	rt.GetState(&st)
 	deals, err := market.AsDealProposalArray(adt.AsStore(rt), st.Proposals)
 	require.NoError(h.t, err)
-	require.NoError(h.t, deals.Delete(uint64(dealId)))
+	require.NoError(h.t, deals.Delete(dealId))
 	st.Proposals, err = deals.Root()
 	require.NoError(h.t, err)
 	rt.ReplaceState(&st)
@@ -3104,6 +3150,7 @@ func (h *marketActorTestHarness) generateAndPublishDeal(rt *mock.Runtime, client
 	startEpoch, endEpoch abi.ChainEpoch, requiredProcessEpoch abi.ChainEpoch) abi.DealID {
 
 	deal := h.generateDealAndAddFunds(rt, client, minerAddrs, startEpoch, endEpoch)
+	rt.SetCaller(minerAddrs.worker, builtin.AccountActorCodeID)
 	dealIds := h.publishDeals(rt, minerAddrs, publishDealReq{deal: deal, requiredProcessEpoch: requiredProcessEpoch})
 	return dealIds[0]
 }
@@ -3151,7 +3198,7 @@ func generateDealProposal(client, provider address.Address, startEpoch, endEpoch
 }
 
 func basicMarketSetup(t *testing.T, owner, provider, worker, client address.Address) (*mock.Runtime, *marketActorTestHarness) {
-	builder := mock.NewBuilder(context.Background(), builtin.StorageMarketActorAddr).
+	builder := mock.NewBuilder(builtin.StorageMarketActorAddr).
 		WithCaller(builtin.SystemActorAddr, builtin.InitActorCodeID).
 		WithBalance(big.Mul(big.NewInt(10), big.NewInt(1e18)), big.Zero()).
 		WithActorType(owner, builtin.AccountActorCodeID).
@@ -3185,6 +3232,18 @@ func mkActivateDealParams(sectorExpiry abi.ChainEpoch, dealIds ...abi.DealID) *m
 
 func mkTerminateDealParams(epoch abi.ChainEpoch, dealIds ...abi.DealID) *market.OnMinerSectorsTerminateParams {
 	return &market.OnMinerSectorsTerminateParams{Epoch: epoch, DealIDs: dealIds}
+}
+
+func expectGetControlAddresses(rt *mock.Runtime, provider address.Address, owner, worker address.Address, controls ...address.Address) {
+	result := &miner.GetControlAddressesReturn{Owner: owner, Worker: worker, ControlAddrs: controls}
+	rt.ExpectSend(
+		provider,
+		builtin.MethodsMiner.ControlAddresses,
+		nil,
+		big.Zero(),
+		result,
+		exitcode.Ok,
+	)
 }
 
 func expectQueryNetworkInfo(rt *mock.Runtime, h *marketActorTestHarness) {
