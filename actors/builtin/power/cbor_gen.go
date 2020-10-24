@@ -368,13 +368,13 @@ func (t *Claim) MarshalCBOR(w io.Writer) error {
 
 	scratch := make([]byte, 9)
 
-	// t.SealProofType (abi.RegisteredSealProof) (int64)
-	if t.SealProofType >= 0 {
-		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajUnsignedInt, uint64(t.SealProofType)); err != nil {
+	// t.WindowPoStProofType (abi.RegisteredPoStProof) (int64)
+	if t.WindowPoStProofType >= 0 {
+		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajUnsignedInt, uint64(t.WindowPoStProofType)); err != nil {
 			return err
 		}
 	} else {
-		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajNegativeInt, uint64(-t.SealProofType-1)); err != nil {
+		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajNegativeInt, uint64(-t.WindowPoStProofType-1)); err != nil {
 			return err
 		}
 	}
@@ -409,7 +409,7 @@ func (t *Claim) UnmarshalCBOR(r io.Reader) error {
 		return fmt.Errorf("cbor input had wrong number of fields")
 	}
 
-	// t.SealProofType (abi.RegisteredSealProof) (int64)
+	// t.WindowPoStProofType (abi.RegisteredPoStProof) (int64)
 	{
 		maj, extra, err := cbg.CborReadHeaderBuf(br, scratch)
 		var extraI int64
@@ -432,7 +432,7 @@ func (t *Claim) UnmarshalCBOR(r io.Reader) error {
 			return fmt.Errorf("wrong type for int64 field: %d", maj)
 		}
 
-		t.SealProofType = abi.RegisteredSealProof(extraI)
+		t.WindowPoStProofType = abi.RegisteredPoStProof(extraI)
 	}
 	// t.RawBytePower (big.Int) (struct)
 
@@ -536,6 +536,209 @@ func (t *CronEvent) UnmarshalCBOR(r io.Reader) error {
 	if _, err := io.ReadFull(br, t.CallbackPayload[:]); err != nil {
 		return err
 	}
+	return nil
+}
+
+var lengthBufCreateMinerParams = []byte{133}
+
+func (t *CreateMinerParams) MarshalCBOR(w io.Writer) error {
+	if t == nil {
+		_, err := w.Write(cbg.CborNull)
+		return err
+	}
+	if _, err := w.Write(lengthBufCreateMinerParams); err != nil {
+		return err
+	}
+
+	scratch := make([]byte, 9)
+
+	// t.Owner (address.Address) (struct)
+	if err := t.Owner.MarshalCBOR(w); err != nil {
+		return err
+	}
+
+	// t.Worker (address.Address) (struct)
+	if err := t.Worker.MarshalCBOR(w); err != nil {
+		return err
+	}
+
+	// t.WindowPoStProofType (abi.RegisteredPoStProof) (int64)
+	if t.WindowPoStProofType >= 0 {
+		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajUnsignedInt, uint64(t.WindowPoStProofType)); err != nil {
+			return err
+		}
+	} else {
+		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajNegativeInt, uint64(-t.WindowPoStProofType-1)); err != nil {
+			return err
+		}
+	}
+
+	// t.Peer ([]uint8) (slice)
+	if len(t.Peer) > cbg.ByteArrayMaxLen {
+		return xerrors.Errorf("Byte array in field t.Peer was too long")
+	}
+
+	if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajByteString, uint64(len(t.Peer))); err != nil {
+		return err
+	}
+
+	if _, err := w.Write(t.Peer[:]); err != nil {
+		return err
+	}
+
+	// t.Multiaddrs ([][]uint8) (slice)
+	if len(t.Multiaddrs) > cbg.MaxLength {
+		return xerrors.Errorf("Slice value in field t.Multiaddrs was too long")
+	}
+
+	if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajArray, uint64(len(t.Multiaddrs))); err != nil {
+		return err
+	}
+	for _, v := range t.Multiaddrs {
+		if len(v) > cbg.ByteArrayMaxLen {
+			return xerrors.Errorf("Byte array in field v was too long")
+		}
+
+		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajByteString, uint64(len(v))); err != nil {
+			return err
+		}
+
+		if _, err := w.Write(v[:]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *CreateMinerParams) UnmarshalCBOR(r io.Reader) error {
+	*t = CreateMinerParams{}
+
+	br := cbg.GetPeeker(r)
+	scratch := make([]byte, 8)
+
+	maj, extra, err := cbg.CborReadHeaderBuf(br, scratch)
+	if err != nil {
+		return err
+	}
+	if maj != cbg.MajArray {
+		return fmt.Errorf("cbor input should be of type array")
+	}
+
+	if extra != 5 {
+		return fmt.Errorf("cbor input had wrong number of fields")
+	}
+
+	// t.Owner (address.Address) (struct)
+
+	{
+
+		if err := t.Owner.UnmarshalCBOR(br); err != nil {
+			return xerrors.Errorf("unmarshaling t.Owner: %w", err)
+		}
+
+	}
+	// t.Worker (address.Address) (struct)
+
+	{
+
+		if err := t.Worker.UnmarshalCBOR(br); err != nil {
+			return xerrors.Errorf("unmarshaling t.Worker: %w", err)
+		}
+
+	}
+	// t.WindowPoStProofType (abi.RegisteredPoStProof) (int64)
+	{
+		maj, extra, err := cbg.CborReadHeaderBuf(br, scratch)
+		var extraI int64
+		if err != nil {
+			return err
+		}
+		switch maj {
+		case cbg.MajUnsignedInt:
+			extraI = int64(extra)
+			if extraI < 0 {
+				return fmt.Errorf("int64 positive overflow")
+			}
+		case cbg.MajNegativeInt:
+			extraI = int64(extra)
+			if extraI < 0 {
+				return fmt.Errorf("int64 negative oveflow")
+			}
+			extraI = -1 - extraI
+		default:
+			return fmt.Errorf("wrong type for int64 field: %d", maj)
+		}
+
+		t.WindowPoStProofType = abi.RegisteredPoStProof(extraI)
+	}
+	// t.Peer ([]uint8) (slice)
+
+	maj, extra, err = cbg.CborReadHeaderBuf(br, scratch)
+	if err != nil {
+		return err
+	}
+
+	if extra > cbg.ByteArrayMaxLen {
+		return fmt.Errorf("t.Peer: byte array too large (%d)", extra)
+	}
+	if maj != cbg.MajByteString {
+		return fmt.Errorf("expected byte array")
+	}
+
+	if extra > 0 {
+		t.Peer = make([]uint8, extra)
+	}
+
+	if _, err := io.ReadFull(br, t.Peer[:]); err != nil {
+		return err
+	}
+	// t.Multiaddrs ([][]uint8) (slice)
+
+	maj, extra, err = cbg.CborReadHeaderBuf(br, scratch)
+	if err != nil {
+		return err
+	}
+
+	if extra > cbg.MaxLength {
+		return fmt.Errorf("t.Multiaddrs: array too large (%d)", extra)
+	}
+
+	if maj != cbg.MajArray {
+		return fmt.Errorf("expected cbor array")
+	}
+
+	if extra > 0 {
+		t.Multiaddrs = make([][]uint8, extra)
+	}
+
+	for i := 0; i < int(extra); i++ {
+		{
+			var maj byte
+			var extra uint64
+			var err error
+
+			maj, extra, err = cbg.CborReadHeaderBuf(br, scratch)
+			if err != nil {
+				return err
+			}
+
+			if extra > cbg.ByteArrayMaxLen {
+				return fmt.Errorf("t.Multiaddrs[i]: byte array too large (%d)", extra)
+			}
+			if maj != cbg.MajByteString {
+				return fmt.Errorf("expected byte array")
+			}
+
+			if extra > 0 {
+				t.Multiaddrs[i] = make([]uint8, extra)
+			}
+
+			if _, err := io.ReadFull(br, t.Multiaddrs[i][:]); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -666,13 +869,13 @@ func (t *MinerConstructorParams) MarshalCBOR(w io.Writer) error {
 		}
 	}
 
-	// t.SealProofType (abi.RegisteredSealProof) (int64)
-	if t.SealProofType >= 0 {
-		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajUnsignedInt, uint64(t.SealProofType)); err != nil {
+	// t.WindowPoStProofType (abi.RegisteredPoStProof) (int64)
+	if t.WindowPoStProofType >= 0 {
+		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajUnsignedInt, uint64(t.WindowPoStProofType)); err != nil {
 			return err
 		}
 	} else {
-		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajNegativeInt, uint64(-t.SealProofType-1)); err != nil {
+		if err := cbg.WriteMajorTypeHeaderBuf(scratch, w, cbg.MajNegativeInt, uint64(-t.WindowPoStProofType-1)); err != nil {
 			return err
 		}
 	}
@@ -779,7 +982,7 @@ func (t *MinerConstructorParams) UnmarshalCBOR(r io.Reader) error {
 		t.ControlAddrs[i] = v
 	}
 
-	// t.SealProofType (abi.RegisteredSealProof) (int64)
+	// t.WindowPoStProofType (abi.RegisteredPoStProof) (int64)
 	{
 		maj, extra, err := cbg.CborReadHeaderBuf(br, scratch)
 		var extraI int64
@@ -802,7 +1005,7 @@ func (t *MinerConstructorParams) UnmarshalCBOR(r io.Reader) error {
 			return fmt.Errorf("wrong type for int64 field: %d", maj)
 		}
 
-		t.SealProofType = abi.RegisteredSealProof(extraI)
+		t.WindowPoStProofType = abi.RegisteredPoStProof(extraI)
 	}
 	// t.PeerId ([]uint8) (slice)
 
