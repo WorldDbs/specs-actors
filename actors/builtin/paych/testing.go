@@ -4,8 +4,8 @@ import (
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type StateSummary struct {
@@ -24,7 +24,7 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount) (
 	acc.Require(st.SettlingAt >= st.MinSettleHeight,
 		"channel is setting at epoch %d before min settle height %d", st.SettlingAt, st.MinSettleHeight)
 
-	if lanes, err := adt.AsArray(store, st.LaneStates); err != nil {
+	if lanes, err := adt.AsArray(store, st.LaneStates, LaneStatesAmtBitwidth); err != nil {
 		acc.Addf("error loading lanes: %v", err)
 	} else {
 		var lane LaneState
