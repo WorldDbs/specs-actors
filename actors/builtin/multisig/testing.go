@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"github.com/filecoin-project/go-address"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type StateSummary struct {
@@ -37,7 +37,7 @@ func CheckStateInvariants(st *State, store adt.Store) (*StateSummary, *builtin.M
 	// test pending transactions
 	maxTxnID := TxnID(-1)
 	numPending := uint64(0)
-	if transactions, err := adt.AsMap(store, st.PendingTxns); err != nil {
+	if transactions, err := adt.AsMap(store, st.PendingTxns, builtin.DefaultHamtBitwidth); err != nil {
 		acc.Addf("error loading transactions: %v", err)
 	} else {
 		var txn Transaction
