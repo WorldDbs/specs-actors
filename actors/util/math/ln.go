@@ -4,7 +4,6 @@ import (
 	gbig "math/big"
 
 	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/specs-actors/actors/util/math"
 )
 
 var (
@@ -28,7 +27,7 @@ func init() {
 		"-20351202052858059355702509232125230498980",
 		"-1563932590352680681114104005183375350999",
 	}
-	lnNumCoef = math.Parse(num)
+	lnNumCoef = Parse(num)
 
 	denom := []string{
 		"49928077726659937662124949977867279384",
@@ -39,7 +38,7 @@ func init() {
 		"9015227820322455780436733526367238305537",
 		"340282366920938463463374607431768211456",
 	}
-	lnDenomCoef = math.Parse(denom)
+	lnDenomCoef = Parse(denom)
 
 	constStrs := []string{
 		"235865763225513294137944142764154484399", // ln(2)
