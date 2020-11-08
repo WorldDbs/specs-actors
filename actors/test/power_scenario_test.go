@@ -8,11 +8,11 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v2/support/ipld"
-	vm "github.com/filecoin-project/specs-actors/v2/support/vm"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v3/support/ipld"
+	vm "github.com/filecoin-project/specs-actors/v3/support/vm"
 )
 
 func TestCreateMiner(t *testing.T) {
@@ -21,10 +21,10 @@ func TestCreateMiner(t *testing.T) {
 	addrs := vm.CreateAccounts(ctx, t, v, 1, big.Mul(big.NewInt(10_000), big.NewInt(1e18)), 93837778)
 
 	params := power.CreateMinerParams{
-		Owner:         addrs[0],
-		Worker:        addrs[0],
-		SealProofType: abi.RegisteredSealProof_StackedDrg32GiBV1_1,
-		Peer:          abi.PeerID("not really a peer id"),
+		Owner:                addrs[0],
+		Worker:               addrs[0],
+		WindowPoStProofType:  abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
+		Peer:                 abi.PeerID("not really a peer id"),
 	}
 	ret := vm.ApplyOk(t, v, addrs[0], builtin.StoragePowerActorAddr, big.NewInt(1e10), builtin.MethodsPower.CreateMiner, &params)
 
@@ -49,13 +49,12 @@ func TestCreateMiner(t *testing.T) {
 				To:     minerAddrs.IDAddress,
 				Method: builtin.MethodConstructor,
 				Params: vm.ExpectObject(&miner.ConstructorParams{
-					OwnerAddr:     params.Owner,
-					WorkerAddr:    params.Worker,
-					SealProofType: params.SealProofType,
-					PeerId:        params.Peer,
+					OwnerAddr:            params.Owner,
+					WorkerAddr:           params.Worker,
+					WindowPoStProofType:  params.WindowPoStProofType,
+					PeerId:               params.Peer,
 				}),
 				SubInvocations: []vm.ExpectInvocation{{
-
 					// Miner calls back to power actor to enroll its cron event
 					To:             builtin.StoragePowerActorAddr,
 					Method:         builtin.MethodsPower.EnrollCronEvent,
@@ -72,7 +71,9 @@ func TestOnEpochTickEnd(t *testing.T) {
 	addrs := vm.CreateAccounts(ctx, t, v, 1, big.Mul(big.NewInt(10_000), big.NewInt(1e18)), 93837778)
 
 	// create a miner
-	params := power.CreateMinerParams{Owner: addrs[0], Worker: addrs[0], SealProofType: abi.RegisteredSealProof_StackedDrg32GiBV1_1, Peer: abi.PeerID("pid")}
+	params := power.CreateMinerParams{Owner: addrs[0], Worker: addrs[0],
+		WindowPoStProofType: abi.RegisteredPoStProof_StackedDrgWindow32GiBV1,
+		Peer: abi.PeerID("pid")}
 	ret := vm.ApplyOk(t, v, addrs[0], builtin.StoragePowerActorAddr, big.NewInt(1e10), builtin.MethodsPower.CreateMiner, &params)
 
 	ret, ok := ret.(*power.CreateMinerReturn)
