@@ -9,7 +9,7 @@ import (
 	"github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
 )
 
 // The period over which a miner's active sectors are expected to be proven via WindowPoSt.
@@ -21,6 +21,10 @@ var WPoStProvingPeriod = abi.ChainEpoch(builtin.EpochsInDay) // 24 hours PARAM_S
 // provide a Window PoSt proof.
 // This provides a miner enough time to compute and propagate a Window PoSt proof.
 var WPoStChallengeWindow = abi.ChainEpoch(30 * 60 / builtin.EpochDurationSeconds) // 30 minutes (48 per day) PARAM_SPEC
+
+// WPoStDisputeWindow is the period after a challenge window ends during which
+// PoSts submitted during that period may be disputed.
+var WPoStDisputeWindow = 2 * ChainFinality // PARAM_SPEC
 
 // The number of non-overlapping PoSt deadlines in a proving period.
 // This spreads a miner's Window PoSt work across a proving period.
@@ -40,6 +44,31 @@ func init() {
 	// Check that WPoStPeriodDeadlines is consistent with the proving period and challenge window.
 	if abi.ChainEpoch(WPoStPeriodDeadlines)*WPoStChallengeWindow != WPoStProvingPeriod {
 		panic(fmt.Sprintf("incompatible proving period %d and challenge window %d", WPoStProvingPeriod, WPoStChallengeWindow))
+	}
+
+	// Check to make sure the dispute window is longer than finality so there's always some time to dispute bad proofs.
+	if WPoStDisputeWindow <= ChainFinality {
+		panic(fmt.Sprintf("the proof dispute period %d must exceed finality %d", WPoStDisputeWindow, ChainFinality))
+	}
+
+	// A deadline becomes immutable one challenge window before it's challenge window opens.
+	// The challenge lookback must fall within this immutability period.
+	if WPoStChallengeLookback > WPoStChallengeWindow {
+		panic("the challenge lookback cannot exceed one challenge window")
+	}
+
+	// Deadlines are immutable when the challenge window is open, and during
+	// the previous challenge window.
+	immutableWindow := 2 * WPoStChallengeWindow
+
+	// We want to reserve at least one deadline's worth of time to compact a
+	// deadline.
+	minCompactionWindow := WPoStChallengeWindow
+
+	// Make sure we have enough time in the proving period to do everything we need.
+	if (minCompactionWindow + immutableWindow + WPoStDisputeWindow) > WPoStProvingPeriod {
+		panic(fmt.Sprintf("together, the minimum compaction window (%d) immutability window (%d) and the dispute window (%d) exceed the proving period (%d)",
+			minCompactionWindow, immutableWindow, WPoStDisputeWindow, WPoStProvingPeriod))
 	}
 }
 
@@ -64,11 +93,6 @@ const (
 	// MaxMultiaddrData is the maximum amount of data that can be stored in multiaddrs.
 	MaxMultiaddrData = 1024 // PARAM_SPEC
 )
-
-// Maximum size of a single prove-commit proof, in bytes.
-// The 1024 maximum at network version 4 was an error (the expected size is 1920).
-const MaxProveCommitSizeV4 = 1024
-const MaxProveCommitSizeV5 = 10240
 
 // Maximum number of control addresses a miner may register.
 const MaxControlAddresses = 10
@@ -123,24 +147,19 @@ func CanPreCommitSealProof(s abi.RegisteredSealProof, nv network.Version) bool {
 }
 
 // List of proof types for which sector lifetime may be extended.
-var ExtensibleProofTypesV0 = map[abi.RegisteredSealProof]struct{}{
-	abi.RegisteredSealProof_StackedDrg32GiBV1: {},
-	abi.RegisteredSealProof_StackedDrg64GiBV1: {},
-}
-
-// From network version 7, sectors sealed with the V1 seal proof types cannot be extended.
-var ExtensibleProofTypesV7 = map[abi.RegisteredSealProof]struct{}{
+// From network version 7 to version 10, sectors sealed with the V1 seal proof types cannot be extended.
+var ExtensibleProofTypes = map[abi.RegisteredSealProof]struct{}{
 	abi.RegisteredSealProof_StackedDrg32GiBV1_1: {},
 	abi.RegisteredSealProof_StackedDrg64GiBV1_1: {},
 }
 
 // Checks whether a seal proof type is supported for new miners and sectors.
 func CanExtendSealProofType(s abi.RegisteredSealProof, nv network.Version) bool {
-	_, ok := ExtensibleProofTypesV0[s]
-	if nv >= network.Version7 {
-		_, ok = ExtensibleProofTypesV7[s]
+	if nv >= network.Version7 && nv <= network.Version10 {
+		_, ok := ExtensibleProofTypes[s]
+		return ok
 	}
-	return ok
+	return true
 }
 
 // Maximum delay to allow between sector pre-commit and subsequent proof.
@@ -190,7 +209,7 @@ var FaultMaxAge = WPoStProvingPeriod * 14 // PARAM_SPEC
 const WorkerKeyChangeDelay = ChainFinality // PARAM_SPEC
 
 // Minimum number of epochs past the current epoch a sector may be set to expire.
-const MinSectorExpiration = 90 * builtin.EpochsInDay // PARAM_SPEC
+const MinSectorExpiration = 180 * builtin.EpochsInDay // PARAM_SPEC
 
 // The maximum number of epochs past the current epoch that sector lifetime may be extended.
 // A sector may be extended multiple times, however, the total maximum lifetime is also bounded by
@@ -322,4 +341,10 @@ func RewardForConsensusSlashReport(elapsedEpoch abi.ChainEpoch, collateral abi.T
 	// Min(rewardNum/rewardDenom, maxReporterShareNum/maxReporterShareDen*collateral)
 	return big.Min(big.Div(num, denom), big.Div(big.Mul(collateral, consensusFaultMaxReporterShare.Numerator),
 		consensusFaultMaxReporterShare.Denominator))
+}
+
+// The reward given for successfully disputing a window post.
+func RewardForDisputedWindowPoSt(proofType abi.RegisteredPoStProof, disputedPower PowerPair) abi.TokenAmount {
+	// This is currently just the base. In the future, the fee may scale based on the disputed power.
+	return BaseRewardForDisputedWindowPoSt
 }
