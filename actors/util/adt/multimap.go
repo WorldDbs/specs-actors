@@ -12,23 +12,38 @@ import (
 // Multimap stores multiple values per key in a HAMT of AMTs.
 // The order of insertion of values for each key is retained.
 type Multimap struct {
-	mp *Map
+	mp            *Map
+	innerBitwidth int
 }
 
 // Interprets a store as a HAMT-based map of AMTs with root `r`.
-func AsMultimap(s Store, r cid.Cid) (*Multimap, error) {
-	m, err := AsMap(s, r)
+// The outer map is interpreted with a branching factor of 2^bitwidth.
+func AsMultimap(s Store, r cid.Cid, outerBitwidth, innerBitwidth int) (*Multimap, error) {
+	m, err := AsMap(s, r, outerBitwidth)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Multimap{m}, nil
+	return &Multimap{m, innerBitwidth}, nil
 }
 
 // Creates a new map backed by an empty HAMT and flushes it to the store.
-func MakeEmptyMultimap(s Store) *Multimap {
-	m := MakeEmptyMap(s)
-	return &Multimap{m}
+// The outer map has a branching factor of 2^bitwidth.
+func MakeEmptyMultimap(s Store, outerBitwidth, innerBitwidth int) (*Multimap, error) {
+	m, err := MakeEmptyMap(s, outerBitwidth)
+	if err != nil {
+		return nil, err
+	}
+	return &Multimap{m, innerBitwidth}, nil
+}
+
+// Creates and stores a new empty multimap, returning its CID.
+func StoreEmptyMultimap(store Store, outerBitwidth, innerBitwidth int) (cid.Cid, error) {
+	mmap, err := MakeEmptyMultimap(store, outerBitwidth, innerBitwidth)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return mmap.Root()
 }
 
 // Returns the root cid of the underlying HAMT.
@@ -44,7 +59,10 @@ func (mm *Multimap) Add(key abi.Keyer, value cbor.Marshaler) error {
 		return err
 	}
 	if !found {
-		array = MakeEmptyArray(mm.mp.store)
+		array, err = MakeEmptyArray(mm.mp.store, mm.innerBitwidth)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Append to the array.
@@ -68,8 +86,7 @@ func (mm *Multimap) Add(key abi.Keyer, value cbor.Marshaler) error {
 
 // Removes all values for a key.
 func (mm *Multimap) RemoveAll(key abi.Keyer) error {
-	err := mm.mp.Delete(key)
-	if err != nil {
+	if _, err := mm.mp.TryDelete(key); err != nil {
 		return errors.Wrapf(err, "failed to delete multimap key %v root %v", key, mm.mp.root)
 	}
 	return nil
@@ -93,7 +110,7 @@ func (mm *Multimap) ForEach(key abi.Keyer, out cbor.Unmarshaler, fn func(i int64
 func (mm *Multimap) ForAll(fn func(k string, arr *Array) error) error {
 	var arrRoot cbg.CborCid
 	if err := mm.mp.ForEach(&arrRoot, func(k string) error {
-		arr, err := AsArray(mm.mp.store, cid.Cid(arrRoot))
+		arr, err := AsArray(mm.mp.store, cid.Cid(arrRoot), mm.innerBitwidth)
 		if err != nil {
 			return err
 		}
@@ -114,7 +131,7 @@ func (mm *Multimap) Get(key abi.Keyer) (*Array, bool, error) {
 	}
 	var array *Array
 	if found {
-		array, err = AsArray(mm.mp.store, cid.Cid(arrayRoot))
+		array, err = AsArray(mm.mp.store, cid.Cid(arrayRoot), mm.innerBitwidth)
 		if err != nil {
 			return nil, false, xerrors.Errorf("failed to load value %v as an array: %w", key, err)
 		}
