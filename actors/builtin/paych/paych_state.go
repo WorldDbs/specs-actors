@@ -35,6 +35,8 @@ type LaneState struct {
 	Nonce    uint64
 }
 
+const LaneStatesAmtBitwidth = 3
+
 func ConstructState(from addr.Address, to addr.Address, emptyArrCid cid.Cid) *State {
 	return &State{
 		From:            from,
