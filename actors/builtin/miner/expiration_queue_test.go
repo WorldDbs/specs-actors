@@ -1,7 +1,6 @@
 package miner_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -12,10 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v2/support/testing"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
 )
 
 func TestExpirationSet(t *testing.T) {
@@ -241,7 +240,7 @@ func TestExpirationQueue(t *testing.T) {
 	})
 
 	t.Run("quantizes added sectors by expiration", func(t *testing.T) {
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(5, 3))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(5, 3), testAmtBitwidth)
 		secNums, power, pledge, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
 		assertBitfieldEquals(t, secNums, 1, 2, 3, 4, 5, 6)
@@ -342,7 +341,7 @@ func TestExpirationQueue(t *testing.T) {
 
 	t.Run("reschedules sectors as faults", func(t *testing.T) {
 		// Create 3 expiration sets with 2 sectors apiece
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
 
@@ -403,7 +402,7 @@ func TestExpirationQueue(t *testing.T) {
 
 	t.Run("reschedules all sectors as faults", func(t *testing.T) {
 		// Create expiration 3 sets with 2 sectors apiece
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
 
@@ -464,7 +463,7 @@ func TestExpirationQueue(t *testing.T) {
 
 	t.Run("reschedule expirations then reschedule as fault", func(t *testing.T) {
 		// Create expiration 3 sets with 2 sectors apiece
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
 
@@ -501,7 +500,7 @@ func TestExpirationQueue(t *testing.T) {
 
 	t.Run("reschedule recover restores all sector stats", func(t *testing.T) {
 		// Create expiration 3 sets with 2 sectors apiece
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
 
@@ -566,7 +565,7 @@ func TestExpirationQueue(t *testing.T) {
 
 	t.Run("replaces sectors with new sectors", func(t *testing.T) {
 		// Create expiration 3 sets
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 
 		// add sectors to each set
 		_, _, _, err := queue.AddActiveSectors([]*miner.SectorOnChainInfo{sectors[0], sectors[1], sectors[3], sectors[5]}, sectorSize)
@@ -620,7 +619,7 @@ func TestExpirationQueue(t *testing.T) {
 
 	t.Run("removes sectors", func(t *testing.T) {
 		// add all sectors into 3 sets
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
 
@@ -682,21 +681,21 @@ func TestExpirationQueue(t *testing.T) {
 	})
 
 	t.Run("adding no sectors leaves the queue empty", func(t *testing.T) {
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		_, _, _, err := queue.AddActiveSectors(nil, sectorSize)
 		require.NoError(t, err)
 		assert.Zero(t, queue.Length())
 	})
 
 	t.Run("rescheduling no expirations leaves the queue empty", func(t *testing.T) {
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		err := queue.RescheduleExpirations(10, nil, sectorSize)
 		require.NoError(t, err)
 		assert.Zero(t, queue.Length())
 	})
 
 	t.Run("rescheduling no expirations as faults leaves the queue empty", func(t *testing.T) {
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 
 		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
@@ -709,7 +708,7 @@ func TestExpirationQueue(t *testing.T) {
 	})
 
 	t.Run("rescheduling all expirations as faults leaves the queue empty if it was empty", func(t *testing.T) {
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 
 		_, _, _, err := queue.AddActiveSectors(sectors, sectorSize)
 		require.NoError(t, err)
@@ -722,7 +721,7 @@ func TestExpirationQueue(t *testing.T) {
 	})
 
 	t.Run("rescheduling no sectors as recovered leaves the queue empty", func(t *testing.T) {
-		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1))
+		queue := emptyExpirationQueueWithQuantizing(t, miner.NewQuantSpec(4, 1), testAmtBitwidth)
 		_, err := queue.RescheduleRecovered(nil, sectorSize)
 		require.NoError(t, err)
 		assert.Zero(t, queue.Length())
@@ -751,17 +750,17 @@ func requireNoExpirationGroupsBefore(t *testing.T, epoch abi.ChainEpoch, queue m
 	require.True(t, empty)
 }
 
-func emptyExpirationQueueWithQuantizing(t *testing.T, quant miner.QuantSpec) miner.ExpirationQueue {
-	rt := mock.NewBuilder(context.Background(), address.Undef).Build(t)
+func emptyExpirationQueueWithQuantizing(t *testing.T, quant miner.QuantSpec, bitwidth int) miner.ExpirationQueue {
+	rt := mock.NewBuilder(address.Undef).Build(t)
 	store := adt.AsStore(rt)
-	root, err := adt.MakeEmptyArray(store).Root()
+	emptyArray, err := adt.StoreEmptyArray(store, testAmtBitwidth)
 	require.NoError(t, err)
 
-	queue, err := miner.LoadExpirationQueue(store, root, quant)
+	queue, err := miner.LoadExpirationQueue(store, emptyArray, quant, bitwidth)
 	require.NoError(t, err)
 	return queue
 }
 
 func emptyExpirationQueue(t *testing.T) miner.ExpirationQueue {
-	return emptyExpirationQueueWithQuantizing(t, miner.NoQuantization)
+	return emptyExpirationQueueWithQuantizing(t, miner.NoQuantization, testAmtBitwidth)
 }
