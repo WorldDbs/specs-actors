@@ -9,14 +9,14 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/filecoin-project/go-state-types/exitcode"
-	"github.com/filecoin-project/go-state-types/network"
 	multisig0 "github.com/filecoin-project/specs-actors/actors/builtin/multisig"
+	multisig2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/multisig"
+
 	"github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/runtime"
-	. "github.com/filecoin-project/specs-actors/v2/actors/util"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type TxnID = multisig0.TxnID
@@ -73,14 +73,13 @@ func (a Actor) State() cbor.Er {
 
 var _ runtime.VMActor = Actor{}
 
-// Changed since v0:
-// - Added StartEpoch
-type ConstructorParams struct {
-	Signers               []addr.Address
-	NumApprovalsThreshold uint64
-	UnlockDuration        abi.ChainEpoch
-	StartEpoch            abi.ChainEpoch
-}
+// type ConstructorParams struct {
+// 	Signers               []addr.Address
+// 	NumApprovalsThreshold uint64
+// 	UnlockDuration        abi.ChainEpoch
+// 	StartEpoch            abi.ChainEpoch
+// }
+type ConstructorParams = multisig2.ConstructorParams
 
 func (a Actor) Constructor(rt runtime.Runtime, params *ConstructorParams) *abi.EmptyValue {
 	rt.ValidateImmediateCallerIs(builtin.InitActorAddr)
@@ -120,7 +119,7 @@ func (a Actor) Constructor(rt runtime.Runtime, params *ConstructorParams) *abi.E
 		rt.Abortf(exitcode.ErrIllegalArgument, "negative unlock duration disallowed")
 	}
 
-	pending, err := adt.MakeEmptyMap(adt.AsStore(rt)).Root()
+	pending, err := adt.StoreEmptyMap(adt.AsStore(rt), builtin.DefaultHamtBitwidth)
 	if err != nil {
 		rt.Abortf(exitcode.ErrIllegalState, "failed to create empty map: %v", err)
 	}
@@ -170,11 +169,11 @@ func (a Actor) Propose(rt runtime.Runtime, params *ProposeParams) *ProposeReturn
 	var st State
 	var txn *Transaction
 	rt.StateTransaction(&st, func() {
-		if !isSigner(proposer, st.Signers) {
+		if !st.IsSigner(proposer) {
 			rt.Abortf(exitcode.ErrForbidden, "%s is not a signer", proposer)
 		}
 
-		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns)
+		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load pending transactions")
 
 		txnID = st.NextTxnID
@@ -227,17 +226,16 @@ type ApproveReturn = multisig0.ApproveReturn
 
 func (a Actor) Approve(rt runtime.Runtime, params *TxnIDParams) *ApproveReturn {
 	rt.ValidateImmediateCallerType(builtin.CallerTypesSignable...)
-	callerAddr := rt.Caller()
+	approver := rt.Caller()
 
 	var st State
 	var txn *Transaction
 	rt.StateTransaction(&st, func() {
-		callerIsSigner := isSigner(callerAddr, st.Signers)
-		if !callerIsSigner {
-			rt.Abortf(exitcode.ErrForbidden, "%s is not a signer", callerAddr)
+		if !st.IsSigner(approver) {
+			rt.Abortf(exitcode.ErrForbidden, "%s is not a signer", approver)
 		}
 
-		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns)
+		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load pending transactions")
 
 		txn = getTransaction(rt, ptx, params.ID, params.ProposalHash, true)
@@ -264,18 +262,21 @@ func (a Actor) Cancel(rt runtime.Runtime, params *TxnIDParams) *abi.EmptyValue {
 
 	var st State
 	rt.StateTransaction(&st, func() {
-		callerIsSigner := isSigner(callerAddr, st.Signers)
+		callerIsSigner := st.IsSigner(callerAddr)
 		if !callerIsSigner {
 			rt.Abortf(exitcode.ErrForbidden, "%s is not a signer", callerAddr)
 		}
 
-		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns)
+		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load pending txns")
 
-		txn, err := getPendingTransaction(ptx, params.ID)
-		if err != nil {
-			rt.Abortf(exitcode.ErrNotFound, "failed to get transaction for cancel: %v", err)
+		var txn Transaction
+		found, err := ptx.Pop(params.ID, &txn)
+		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to pop transaction %v for cancel", params.ID)
+		if !found {
+			rt.Abortf(exitcode.ErrNotFound, "no such transaction %v to cancel", params.ID)
 		}
+
 		proposer := txn.Approved[0]
 		if proposer != callerAddr {
 			rt.Abortf(exitcode.ErrForbidden, "Cannot cancel another signers transaction")
@@ -287,9 +288,6 @@ func (a Actor) Cancel(rt runtime.Runtime, params *TxnIDParams) *abi.EmptyValue {
 		if params.ProposalHash != nil && !bytes.Equal(params.ProposalHash, calculatedHash[:]) {
 			rt.Abortf(exitcode.ErrIllegalState, "hash does not match proposal params (ensure requester is an ID address)")
 		}
-
-		err = ptx.Delete(params.ID)
-		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to delete pending transaction")
 
 		st.PendingTxns, err = ptx.Root()
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to flush pending transactions")
@@ -315,8 +313,7 @@ func (a Actor) AddSigner(rt runtime.Runtime, params *AddSignerParams) *abi.Empty
 			rt.Abortf(exitcode.ErrForbidden, "cannot add more than %d signers", SignersMax)
 		}
 
-		isSigner := isSigner(resolvedNewSigner, st.Signers)
-		if isSigner {
+		if st.IsSigner(resolvedNewSigner) {
 			rt.Abortf(exitcode.ErrForbidden, "%s is already a signer", resolvedNewSigner)
 		}
 
@@ -343,8 +340,7 @@ func (a Actor) RemoveSigner(rt runtime.Runtime, params *RemoveSignerParams) *abi
 	store := adt.AsStore(rt)
 	var st State
 	rt.StateTransaction(&st, func() {
-		isSigner := isSigner(resolvedOldSigner, st.Signers)
-		if !isSigner {
+		if !st.IsSigner(resolvedOldSigner) {
 			rt.Abortf(exitcode.ErrForbidden, "%s is not a signer", resolvedOldSigner)
 		}
 
@@ -402,13 +398,11 @@ func (a Actor) SwapSigner(rt runtime.Runtime, params *SwapSignerParams) *abi.Emp
 	store := adt.AsStore(rt)
 	var st State
 	rt.StateTransaction(&st, func() {
-		fromIsSigner := isSigner(fromResolved, st.Signers)
-		if !fromIsSigner {
+		if !st.IsSigner(fromResolved) {
 			rt.Abortf(exitcode.ErrForbidden, "from addr %s is not a signer", fromResolved)
 		}
 
-		toIsSigner := isSigner(toResolved, st.Signers)
-		if toIsSigner {
+		if st.IsSigner(toResolved) {
 			rt.Abortf(exitcode.ErrIllegalArgument, "%s already a signer", toResolved)
 		}
 
@@ -464,8 +458,7 @@ func (a Actor) LockBalance(rt runtime.Runtime, params *LockBalanceParams) *abi.E
 		rt.Abortf(exitcode.ErrIllegalArgument, "unlock duration must be positive")
 	}
 
-	nv := rt.NetworkVersion()
-	if nv >= network.Version7 && params.Amount.LessThan(big.Zero()) {
+	if params.Amount.LessThan(big.Zero()) {
 		rt.Abortf(exitcode.ErrIllegalArgument, "amount to lock must be positive")
 	}
 
@@ -492,7 +485,7 @@ func (a Actor) approveTransaction(rt runtime.Runtime, txnID TxnID, txn *Transact
 
 	// add the caller to the list of approvers
 	rt.StateTransaction(&st, func() {
-		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns)
+		ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns, builtin.DefaultHamtBitwidth)
 		builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load pending transactions")
 
 		// update approved on the transaction
@@ -508,13 +501,12 @@ func (a Actor) approveTransaction(rt runtime.Runtime, txnID TxnID, txn *Transact
 }
 
 func getTransaction(rt runtime.Runtime, ptx *adt.Map, txnID TxnID, proposalHash []byte, checkHash bool) *Transaction {
-	var txn Transaction
-
 	// get transaction from the state trie
-	var err error
-	txn, err = getPendingTransaction(ptx, txnID)
-	if err != nil {
-		rt.Abortf(exitcode.ErrNotFound, "failed to get transaction for approval: %v", err)
+	var txn Transaction
+	found, err := ptx.Get(txnID, &txn)
+	builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load transaction %v for approval", txnID)
+	if !found {
+		rt.Abortf(exitcode.ErrNotFound, "no such transaction %v for approval", txnID)
 	}
 
 	// confirm the hashes match
@@ -533,7 +525,6 @@ func executeTransactionIfApproved(rt runtime.Runtime, st State, txnID TxnID, txn
 	var out builtin.CBORBytes
 	var code exitcode.ExitCode
 	applied := false
-	nv := rt.NetworkVersion()
 
 	thresholdMet := uint64(len(txn.Approved)) >= st.NumApprovalsThreshold
 	if thresholdMet {
@@ -553,25 +544,13 @@ func executeTransactionIfApproved(rt runtime.Runtime, st State, txnID TxnID, txn
 
 		// This could be rearranged to happen inside the first state transaction, before the send().
 		rt.StateTransaction(&st, func() {
-			ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns)
+			ptx, err := adt.AsMap(adt.AsStore(rt), st.PendingTxns, builtin.DefaultHamtBitwidth)
 			builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to load pending transactions")
 
-			// Prior to version 6 we attempt to delete all transactions, even those
-			// no longer in the pending txns map because they have been purged.
-			shouldDelete := true
-			// Starting at version 6 we first check if the transaction exists before
-			// deleting. This allows 1 out of n multisig swaps and removes initiated
-			// by the swapped/removed signer to go through without an illegal state error
-			if nv >= network.Version6 {
-				txnExists, err := ptx.Has(txnID)
-				builtin.RequireNoErr(rt, err, exitcode.ErrIllegalState, "failed to check existance of transaction %v for cleanup", txnID)
-				shouldDelete = txnExists
-			}
-
-			if shouldDelete {
-				if err := ptx.Delete(txnID); err != nil {
-					rt.Abortf(exitcode.ErrIllegalState, "failed to delete transaction for cleanup: %v", err)
-				}
+			// Allow transaction not to be found when deleting.
+			// This allows 1 out of n multisig swaps and removes initiated by the swapped/removed signer to go through cleanly.
+			if _, err := ptx.TryDelete(txnID); err != nil {
+				rt.Abortf(exitcode.ErrIllegalState, "failed to delete transaction for cleanup: %v", err)
 			}
 
 			st.PendingTxns, err = ptx.Root()
@@ -583,18 +562,6 @@ func executeTransactionIfApproved(rt runtime.Runtime, st State, txnID TxnID, txn
 	// since it just copies the bytes.
 
 	return applied, out, code
-}
-
-func isSigner(address addr.Address, signers []addr.Address) bool {
-	AssertMsg(address.Protocol() == addr.ID, "address %v passed to isSigner must be a resolved address", address)
-	// signer addresses have already been resolved
-	for _, signer := range signers {
-		if signer == address {
-			return true
-		}
-	}
-
-	return false
 }
 
 // Computes a digest of a proposed transaction. This digest is used to confirm identity of the transaction
