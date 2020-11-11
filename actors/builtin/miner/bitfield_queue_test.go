@@ -1,7 +1,6 @@
 package miner_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/filecoin-project/go-address"
@@ -10,14 +9,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v2/support/mock"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/support/mock"
 )
+
+const testAmtBitwidth = 3
 
 func TestBitfieldQueue(t *testing.T) {
 	t.Run("adds values to empty queue", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		values := []uint64{1, 2, 3, 4}
 		epoch := abi.ChainEpoch(42)
@@ -29,7 +30,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("adds bitfield to empty queue", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		values := []uint64{1, 2, 3, 4}
 		epoch := abi.ChainEpoch(42)
@@ -42,7 +43,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("quantizes added epochs according to quantization spec", func(t *testing.T) {
-		queue := emptyBitfieldQueueWithQuantizing(t, miner.NewQuantSpec(5, 3))
+		queue := emptyBitfieldQueueWithQuantizing(t, miner.NewQuantSpec(5, 3), testAmtBitwidth)
 
 		for _, val := range []uint64{0, 2, 3, 4, 7, 8, 9} {
 			require.NoError(t, queue.AddToQueueValues(abi.ChainEpoch(val), val))
@@ -57,7 +58,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("quantizes added epochs according to quantization spec", func(t *testing.T) {
-		queue := emptyBitfieldQueueWithQuantizing(t, miner.NewQuantSpec(5, 3))
+		queue := emptyBitfieldQueueWithQuantizing(t, miner.NewQuantSpec(5, 3), testAmtBitwidth)
 
 		for _, val := range []uint64{0, 2, 3, 4, 7, 8, 9} {
 			err := queue.AddToQueueValues(abi.ChainEpoch(val), val)
@@ -73,7 +74,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("merges values withing same epoch", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		epoch := abi.ChainEpoch(42)
 
@@ -86,7 +87,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("adds values to different epochs", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		epoch1 := abi.ChainEpoch(42)
 		epoch2 := abi.ChainEpoch(93)
@@ -101,7 +102,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("PouUntil from empty queue returns empty bitfield", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		// TODO: broken pending https://github.com/filecoin-project/go-amt-ipld/issues/18
 		//emptyQueue, err := queue.Root()
@@ -122,7 +123,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("PopUntil does nothing if 'until' parameter before first value", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		epoch1 := abi.ChainEpoch(42)
 		epoch2 := abi.ChainEpoch(93)
@@ -148,7 +149,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("PopUntil removes and returns entries before and including target epoch", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		epoch1 := abi.ChainEpoch(42)
 		epoch2 := abi.ChainEpoch(93)
@@ -206,7 +207,7 @@ func TestBitfieldQueue(t *testing.T) {
 	})
 
 	t.Run("cuts elements", func(t *testing.T) {
-		queue := emptyBitfieldQueue(t)
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
 
 		epoch1 := abi.ChainEpoch(42)
 		epoch2 := abi.ChainEpoch(93)
@@ -221,21 +222,31 @@ func TestBitfieldQueue(t *testing.T) {
 			Equals(t, queue)
 	})
 
+	t.Run("adds empty bitfield to queue", func(t *testing.T) {
+		queue := emptyBitfieldQueue(t, testAmtBitwidth)
+
+		epoch := abi.ChainEpoch(42)
+		require.NoError(t, queue.AddToQueue(epoch, bf()))
+
+		// ensures we don't add an empty entry.
+		ExpectBQ().Equals(t, queue)
+	})
+
 }
 
-func emptyBitfieldQueueWithQuantizing(t *testing.T, quant miner.QuantSpec) miner.BitfieldQueue {
-	rt := mock.NewBuilder(context.Background(), address.Undef).Build(t)
+func emptyBitfieldQueueWithQuantizing(t *testing.T, quant miner.QuantSpec, bitwidth int) miner.BitfieldQueue {
+	rt := mock.NewBuilder(address.Undef).Build(t)
 	store := adt.AsStore(rt)
-	root, err := adt.MakeEmptyArray(store).Root()
+	emptyArray, err := adt.StoreEmptyArray(store, bitwidth)
 	require.NoError(t, err)
 
-	queue, err := miner.LoadBitfieldQueue(store, root, quant)
+	queue, err := miner.LoadBitfieldQueue(store, emptyArray, quant, bitwidth)
 	require.NoError(t, err)
 	return queue
 }
 
-func emptyBitfieldQueue(t *testing.T) miner.BitfieldQueue {
-	return emptyBitfieldQueueWithQuantizing(t, miner.NoQuantization)
+func emptyBitfieldQueue(t *testing.T, bitwidth int) miner.BitfieldQueue {
+	return emptyBitfieldQueueWithQuantizing(t, miner.NoQuantization, bitwidth)
 }
 
 type bqExpectation struct {
