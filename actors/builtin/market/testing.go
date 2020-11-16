@@ -12,8 +12,8 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v2/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v2/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
 )
 
 type DealSummary struct {
@@ -60,7 +60,7 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount, c
 	expectedDealOps := make(map[abi.DealID]struct{})
 	totalProposalCollateral := abi.NewTokenAmount(0)
 
-	if proposals, err := adt.AsArray(store, st.Proposals); err != nil {
+	if proposals, err := adt.AsArray(store, st.Proposals, ProposalsAmtBitwidth); err != nil {
 		acc.Addf("error loading proposals: %v", err)
 	} else {
 		var proposal DealProposal
@@ -105,7 +105,7 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount, c
 	//
 
 	dealStateCount := uint64(0)
-	if dealStates, err := adt.AsArray(store, st.States); err != nil {
+	if dealStates, err := adt.AsArray(store, st.States, StatesAmtBitwidth); err != nil {
 		acc.Addf("error loading deal states: %v", err)
 	} else {
 		var dealState DealState
@@ -150,24 +150,17 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount, c
 	//
 
 	pendingProposalCount := uint64(0)
-	if pendingProposals, err := adt.AsMap(store, st.PendingProposals); err != nil {
+	if pendingProposals, err := adt.AsMap(store, st.PendingProposals, builtin.DefaultHamtBitwidth); err != nil {
 		acc.Addf("error loading pending proposals: %v", err)
 	} else {
-		var pendingProposal DealProposal
-		err = pendingProposals.ForEach(&pendingProposal, func(key string) error {
+		err = pendingProposals.ForEach(nil, func(key string) error {
 			proposalCID, err := cid.Parse([]byte(key))
 			if err != nil {
 				return err
 			}
 
-			pcid, err := pendingProposal.Cid()
-			if err != nil {
-				return err
-			}
-			acc.Require(pcid.Equals(proposalCID), "pending proposal's key does not match its CID %v != %v", pcid, proposalCID)
-
-			_, found := proposalCids[pcid]
-			acc.Require(found, "pending proposal with cid %v not fond within proposals %v", pcid, pendingProposals)
+			_, found := proposalCids[proposalCID]
+			acc.Require(found, "pending proposal with cid %v not found within proposals %v", proposalCID, pendingProposals)
 
 			pendingProposalCount++
 			return nil
@@ -227,7 +220,7 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount, c
 
 	dealOpEpochCount := uint64(0)
 	dealOpCount := uint64(0)
-	if dealOps, err := AsSetMultimap(store, st.DealOpsByEpoch); err != nil {
+	if dealOps, err := AsSetMultimap(store, st.DealOpsByEpoch, builtin.DefaultHamtBitwidth, builtin.DefaultHamtBitwidth); err != nil {
 		acc.Addf("error loading deal ops: %v", err)
 	} else {
 		// get into internals just to iterate through full data structure
