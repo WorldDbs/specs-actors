@@ -18,9 +18,9 @@ import (
 	builtin2 "github.com/filecoin-project/specs-actors/v2/actors/builtin"
 	states2 "github.com/filecoin-project/specs-actors/v2/actors/states"
 
-	builtin3 "github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	states3 "github.com/filecoin-project/specs-actors/v3/actors/states"
-	adt3 "github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	builtin3 "github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	states3 "github.com/filecoin-project/specs-actors/v4/actors/states"
+	adt3 "github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 // Config parameterizes a state tree migration
