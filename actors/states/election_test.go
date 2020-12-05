@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v3/actors/states"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v3/support/ipld"
-	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/states"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/support/ipld"
+	tutil "github.com/filecoin-project/specs-actors/v4/support/testing"
 )
 
 func TestMinerEligibleForElection(t *testing.T) {
