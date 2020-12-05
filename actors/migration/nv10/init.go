@@ -7,8 +7,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 
-	builtin3 "github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	init3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/init"
+	builtin3 "github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	init3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
 )
 
 type initMigrator struct{}
