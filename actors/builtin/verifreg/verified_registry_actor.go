@@ -10,9 +10,9 @@ import (
 	"github.com/filecoin-project/go-state-types/exitcode"
 	verifreg0 "github.com/filecoin-project/specs-actors/actors/builtin/verifreg"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 type Actor struct{}
