@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v3/support/ipld"
-	vm "github.com/filecoin-project/specs-actors/v3/support/vm"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/support/ipld"
+	vm "github.com/filecoin-project/specs-actors/v4/support/vm"
 )
 
 func TestMarketWithdraw(t *testing.T) {
