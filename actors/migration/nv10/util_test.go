@@ -3,8 +3,8 @@ package nv10_test
 import (
 	"testing"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/migration/nv10"
-	atesting "github.com/filecoin-project/specs-actors/v3/support/testing"
+	"github.com/filecoin-project/specs-actors/v4/actors/migration/nv10"
+	atesting "github.com/filecoin-project/specs-actors/v4/support/testing"
 	"github.com/stretchr/testify/require"
 )
 
