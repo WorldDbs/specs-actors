@@ -3,19 +3,19 @@ package main
 import (
 	gen "github.com/whyrusleeping/cbor-gen"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/account"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/cron"
-	init_ "github.com/filecoin-project/specs-actors/v3/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/paych"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/system"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/verifreg"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/cron"
+	init_ "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/paych"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/system"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
 )
 
 func main() {
@@ -199,7 +199,7 @@ func main() {
 		//miner.CompactPartitionsParams{}, // Aliased from v0
 		//miner.CompactSectorNumbersParams{}, // Aliased from v0
 		//miner.CronEventPayload{}, // Aliased from v0
-		miner.DisputeWindowedPoStParams{},
+		// miner.DisputeWindowedPoStParams{}, // Aliased from v3
 		// other types
 		//miner.FaultDeclaration{}, // Aliased from v0
 		//miner.RecoveryDeclaration{}, // Aliased from v0
