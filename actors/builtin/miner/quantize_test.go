@@ -35,3 +35,24 @@ func TestQuantizeUp(t *testing.T) {
 		assert.Equal(t, abi.ChainEpoch(10000), quantizeUp(10000, 100, 2000000))
 	})
 }
+
+func TestQuantizeDown(t *testing.T) {
+	t.Run("no quantization", func(t *testing.T) {
+		q := NoQuantization
+		assert.Equal(t, abi.ChainEpoch(0), q.QuantizeDown(0))
+		assert.Equal(t, abi.ChainEpoch(1), q.QuantizeDown(1))
+		assert.Equal(t, abi.ChainEpoch(1337), q.QuantizeDown(1337))
+	})
+	t.Run("zero offset", func(t *testing.T) {
+		q := NewQuantSpec(abi.ChainEpoch(10), abi.ChainEpoch(0))
+		assert.Equal(t, abi.ChainEpoch(6660), q.QuantizeDown(6666))
+		assert.Equal(t, abi.ChainEpoch(50), q.QuantizeDown(50))
+		assert.Equal(t, abi.ChainEpoch(50), q.QuantizeDown(59))
+	})
+
+	t.Run("non zero offset", func(t *testing.T) {
+		q := NewQuantSpec(abi.ChainEpoch(10), abi.ChainEpoch(1))
+		assert.Equal(t, abi.ChainEpoch(11), q.QuantizeDown(20))
+		assert.Equal(t, abi.ChainEpoch(11), q.QuantizeDown(11))
+	})
+}
