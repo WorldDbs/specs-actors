@@ -17,7 +17,7 @@ import (
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
 
-	adt3 "github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	adt3 "github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 // Migrates a HAMT from v2 to v3 without re-encoding keys or values.
