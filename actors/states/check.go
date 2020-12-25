@@ -8,18 +8,18 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/account"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/cron"
-	init_ "github.com/filecoin-project/specs-actors/v3/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/paych"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/reward"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/verifreg"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/account"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/cron"
+	init_ "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/paych"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/reward"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/verifreg"
 )
 
 // Within this code, Go errors are not expected, but are often converted to messages so that execution
@@ -172,8 +172,7 @@ func CheckMinersAgainstPower(acc *builtin.MessageAccumulator, minerSummaries map
 
 		// check crons
 		crons, ok := powerSummary.Crons[addr]
-		if !ok {
-			acc.Addf("miner %s has no cron events, at least one proving period cron expected", addr)
+		if !ok { // with deferred and discontinued crons it is normal for a miner actor to have no cron events
 			continue
 		}
 
@@ -183,6 +182,8 @@ func CheckMinersAgainstPower(acc *builtin.MessageAccumulator, minerSummaries map
 			err := payload.UnmarshalCBOR(bytes.NewReader(event.Payload))
 			acc.Require(err == nil, "miner %v registered cron at epoch %d with wrong or corrupt payload",
 				addr, event.Epoch)
+			acc.Require(payload.EventType == miner.CronEventProcessEarlyTerminations || payload.EventType == miner.CronEventProvingDeadline,
+				"miner %v has unexpected cron event type %v", addr, payload.EventType)
 
 			if payload.EventType == miner.CronEventProvingDeadline {
 				if provingPeriodCron != nil {
@@ -192,6 +193,9 @@ func CheckMinersAgainstPower(acc *builtin.MessageAccumulator, minerSummaries map
 				provingPeriodCron = &event
 			}
 		}
+		hasProvingPeriodCron := provingPeriodCron != nil
+		acc.Require(hasProvingPeriodCron == minerSummary.DeadlineCronActive, "miner %v has invalid DeadlineCronActive (%t) for hasProvingPeriodCron status (%t)",
+			addr, minerSummary.DeadlineCronActive, hasProvingPeriodCron)
 
 		acc.Require(provingPeriodCron != nil, "miner %v has no proving period cron", addr)
 	}
