@@ -10,10 +10,10 @@ import (
 	"github.com/filecoin-project/go-state-types/exitcode"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
-	tutil "github.com/filecoin-project/specs-actors/v3/support/testing"
-	vm "github.com/filecoin-project/specs-actors/v3/support/vm"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	tutil "github.com/filecoin-project/specs-actors/v4/support/testing"
+	vm "github.com/filecoin-project/specs-actors/v4/support/vm"
 )
 
 func publishDeal(t *testing.T, v *vm.VM, provider, dealClient, minerID addr.Address, dealLabel string,
