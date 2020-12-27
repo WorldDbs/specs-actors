@@ -9,9 +9,9 @@ import (
 	market2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/market"
 	adt2 "github.com/filecoin-project/specs-actors/v2/actors/util/adt"
 
-	builtin3 "github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	market3 "github.com/filecoin-project/specs-actors/v3/actors/builtin/market"
-	adt3 "github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	builtin3 "github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	market3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/market"
+	adt3 "github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 type marketMigrator struct{}
