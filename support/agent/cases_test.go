@@ -13,20 +13,22 @@ import (
 	power2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
 	states2 "github.com/filecoin-project/specs-actors/v2/actors/states"
 	vm_test2 "github.com/filecoin-project/specs-actors/v2/support/vm"
+	states3 "github.com/filecoin-project/specs-actors/v3/actors/states"
+	vm_test3 "github.com/filecoin-project/specs-actors/v3/support/vm"
 	cid "github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/exported"
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v3/actors/migration/nv10"
-	"github.com/filecoin-project/specs-actors/v3/actors/states"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v3/support/agent"
-	"github.com/filecoin-project/specs-actors/v3/support/ipld"
-	vm_test "github.com/filecoin-project/specs-actors/v3/support/vm"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/exported"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v4/actors/migration/nv10"
+	"github.com/filecoin-project/specs-actors/v4/actors/states"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/support/agent"
+	"github.com/filecoin-project/specs-actors/v4/support/ipld"
+	vm_test "github.com/filecoin-project/specs-actors/v4/support/vm"
 )
 
 func TestCreate20Miners(t *testing.T) {
@@ -302,14 +304,14 @@ func TestMigration(t *testing.T) {
 		lookup[ba.Code()] = ba
 	}
 
-	v3, err := vm_test.NewVMAtEpoch(ctx, lookup, v2.Store(), nextRoot, priorEpoch+1)
+	v3, err := vm_test3.NewVMAtEpoch(ctx, lookup, v2.Store(), nextRoot, priorEpoch+1)
 	require.NoError(t, err)
 
 	stateTree, err := v3.GetStateTree()
 	require.NoError(t, err)
 	totalBalance, err := v3.GetTotalActorBalance()
 	require.NoError(t, err)
-	msgs, err := states.CheckStateInvariants(stateTree, totalBalance, priorEpoch)
+	msgs, err := states3.CheckStateInvariants(stateTree, totalBalance, priorEpoch)
 	require.NoError(t, err)
 	assert.Zero(t, len(msgs.Messages()), strings.Join(msgs.Messages(), "\n"))
 
