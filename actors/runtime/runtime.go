@@ -12,7 +12,7 @@ import (
 	"github.com/filecoin-project/go-state-types/rt"
 	cid "github.com/ipfs/go-cid"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
 )
 
 // Interfaces for the runtime.
