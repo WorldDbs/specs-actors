@@ -5,9 +5,9 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/go-state-types/exitcode"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/math"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/smoothing"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/math"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/smoothing"
 )
 
 // Projection period of expected sector block reward for deposit required to pre-commit a sector.
@@ -80,7 +80,19 @@ func ExpectedRewardForPower(rewardEstimate, networkQAPowerEstimate smoothing.Fil
 	expectedRewardForProvingPeriod := smoothing.ExtrapolatedCumSumOfRatio(projectionDuration, 0, rewardEstimate, networkQAPowerEstimate)
 	br128 := big.Mul(qaSectorPower, expectedRewardForProvingPeriod) // Q.0 * Q.128 => Q.128
 	br := big.Rsh(br128, math.Precision128)
-	return big.Max(br, big.Zero()) // negative BR is clamped at 0
+
+	return big.Max(br, big.Zero())
+}
+
+// BR but zero values are clamped at 1 attofil
+// Some uses of BR (PCD, IP) require a strictly positive value for BR derived values so
+// accounting variables can be used as succinct indicators of miner activity.
+func ExpectedRewardForPowerClampedAtAttoFIL(rewardEstimate, networkQAPowerEstimate smoothing.FilterEstimate, qaSectorPower abi.StoragePower, projectionDuration abi.ChainEpoch) abi.TokenAmount {
+	br := ExpectedRewardForPower(rewardEstimate, networkQAPowerEstimate, qaSectorPower, projectionDuration)
+	if br.LessThanEqual(big.Zero()) {
+		br = abi.NewTokenAmount(1)
+	}
+	return br
 }
 
 // The penalty for a sector continuing faulty for another proving period.
@@ -137,7 +149,7 @@ func PledgePenaltyForInvalidWindowPoSt(rewardEstimate, networkQAPowerEstimate sm
 // Computes the PreCommit deposit given sector qa weight and current network conditions.
 // PreCommit Deposit = BR(PreCommitDepositProjectionPeriod)
 func PreCommitDepositForPower(rewardEstimate, networkQAPowerEstimate smoothing.FilterEstimate, qaSectorPower abi.StoragePower) abi.TokenAmount {
-	return ExpectedRewardForPower(rewardEstimate, networkQAPowerEstimate, qaSectorPower, PreCommitDepositProjectionPeriod)
+	return ExpectedRewardForPowerClampedAtAttoFIL(rewardEstimate, networkQAPowerEstimate, qaSectorPower, PreCommitDepositProjectionPeriod)
 }
 
 // Computes the pledge requirement for committing new quality-adjusted power to the network, given the current
@@ -152,7 +164,7 @@ func PreCommitDepositForPower(rewardEstimate, networkQAPowerEstimate smoothing.F
 // LockTarget = (LockTargetFactorNum / LockTargetFactorDenom) * FILCirculatingSupply(t)
 // PledgeShare(t) = sectorQAPower / max(BaselinePower(t), NetworkQAPower(t))
 func InitialPledgeForPower(qaPower, baselinePower abi.StoragePower, rewardEstimate, networkQAPowerEstimate smoothing.FilterEstimate, circulatingSupply abi.TokenAmount) abi.TokenAmount {
-	ipBase := ExpectedRewardForPower(rewardEstimate, networkQAPowerEstimate, qaPower, InitialPledgeProjectionPeriod)
+	ipBase := ExpectedRewardForPowerClampedAtAttoFIL(rewardEstimate, networkQAPowerEstimate, qaPower, InitialPledgeProjectionPeriod)
 
 	lockTargetNum := big.Mul(InitialPledgeLockTarget.Numerator, circulatingSupply)
 	lockTargetDenom := InitialPledgeLockTarget.Denominator
