@@ -15,8 +15,8 @@ import (
 	errors "github.com/pkg/errors"
 	xerrors "golang.org/x/xerrors"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v3/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
 )
 
 // Balance of Miner Actor should be greater than or equal to
@@ -54,6 +54,7 @@ type State struct {
 	// sector belongs is compacted.
 	Sectors cid.Cid // Array, AMT[SectorNumber]SectorOnChainInfo (sparse)
 
+	// DEPRECATED. This field will change names and no longer be updated every proving period in a future upgrade
 	// The first epoch in this miner's current proving period. This is the first epoch in which a PoSt for a
 	// partition at the miner's first deadline may arrive. Alternatively, it is after the last epoch at which
 	// a PoSt for the previous window is valid.
@@ -63,6 +64,7 @@ type State struct {
 	// Updated at the end of every period by a cron callback.
 	ProvingPeriodStart abi.ChainEpoch
 
+	// DEPRECATED. This field will be removed from state in a future upgrade.
 	// Index of the deadline within the proving period beginning at ProvingPeriodStart that has not yet been
 	// finalized.
 	// Updated at the end of each deadline window by a cron callback.
@@ -75,6 +77,9 @@ type State struct {
 
 	// Deadlines with outstanding fees for early sector termination.
 	EarlyTerminations bitfield.BitField
+
+	// True when miner cron is active, false otherwise
+	DeadlineCronActive bool
 }
 
 // Bitwidth of AMTs determined empirically from mutation patterns and projections of mainnet data.
@@ -226,6 +231,7 @@ func ConstructState(store adt.Store, infoCid cid.Cid, periodStart abi.ChainEpoch
 		CurrentDeadline:           deadlineIndex,
 		Deadlines:                 emptyDeadlinesCid,
 		EarlyTerminations:         bitfield.New(),
+		DeadlineCronActive:        false,
 	}, nil
 }
 
@@ -273,12 +279,24 @@ func (st *State) SaveInfo(store adt.Store, info *MinerInfo) error {
 	return nil
 }
 
-// Returns deadline calculations for the current (according to state) proving period.
+// Returns deadline calculations for the current proving period, according to the current epoch and constant state offset
 func (st *State) DeadlineInfo(currEpoch abi.ChainEpoch) *dline.Info {
+	return NewDeadlineInfoFromOffsetAndEpoch(st.ProvingPeriodStart, currEpoch)
+}
+
+// Returns deadline calculations for the state recorded proving period and deadline. This is out of date if the a
+// miner does not have an active miner cron
+func (st *State) RecordedDeadlineInfo(currEpoch abi.ChainEpoch) *dline.Info {
 	return NewDeadlineInfo(st.ProvingPeriodStart, st.CurrentDeadline, currEpoch)
 }
 
-// Returns deadline calculations for the current (according to state) proving period.
+// Returns current proving period start for the current epoch according to the current epoch and constant state offset
+func (st *State) CurrentProvingPeriodStart(currEpoch abi.ChainEpoch) abi.ChainEpoch {
+	dlInfo := st.DeadlineInfo(currEpoch)
+	return dlInfo.PeriodStart
+}
+
+// Returns deadline calculations for the current (according to state) proving period
 func (st *State) QuantSpecForDeadline(dlIdx uint64) QuantSpec {
 	return QuantSpecForDeadline(NewDeadlineInfo(st.ProvingPeriodStart, dlIdx, 0))
 }
@@ -514,7 +532,7 @@ func (st *State) RescheduleSectorExpirations(
 
 	var allReplaced []*SectorOnChainInfo
 	if err = deadlineSectors.ForEach(func(dlIdx uint64, pm PartitionSectorMap) error {
-		dlInfo := NewDeadlineInfo(st.ProvingPeriodStart, dlIdx, currEpoch).NextNotElapsed()
+		dlInfo := NewDeadlineInfo(st.CurrentProvingPeriodStart(currEpoch), dlIdx, currEpoch).NextNotElapsed()
 		newExpiration := dlInfo.Last()
 
 		dl, err := deadlines.LoadDeadline(store, dlIdx)
@@ -556,7 +574,7 @@ func (st *State) AssignSectorsToDeadlines(
 	var deadlineArr [WPoStPeriodDeadlines]*Deadline
 	if err = deadlines.ForEach(store, func(idx uint64, dl *Deadline) error {
 		// Skip deadlines that aren't currently mutable.
-		if deadlineIsMutable(st.ProvingPeriodStart, idx, currentEpoch) {
+		if deadlineIsMutable(st.CurrentProvingPeriodStart(currentEpoch), idx, currentEpoch) {
 			deadlineArr[int(idx)] = dl
 		}
 		return nil
@@ -750,6 +768,13 @@ func (st *State) SaveVestingFunds(store adt.Store, funds *VestingFunds) error {
 	}
 	st.VestingFunds = c
 	return nil
+}
+
+// Return true when the miner actor needs to continue scheduling deadline crons
+func (st *State) ContinueDeadlineCron() bool {
+	return !st.PreCommitDeposits.IsZero() ||
+		!st.InitialPledge.IsZero() ||
+		!st.LockedFunds.IsZero()
 }
 
 //
@@ -1114,9 +1139,10 @@ func (st *State) AdvanceDeadline(store adt.Store, currEpoch abi.ChainEpoch) (*Ad
 	}
 
 	// Advance to the next deadline (in case we short-circuit below).
-	st.CurrentDeadline = (st.CurrentDeadline + 1) % WPoStPeriodDeadlines
+	// Maintaining this state info is a legacy operation no longer required for code correctness
+	st.CurrentDeadline = (dlInfo.Index + 1) % WPoStPeriodDeadlines
 	if st.CurrentDeadline == 0 {
-		st.ProvingPeriodStart = st.ProvingPeriodStart + WPoStProvingPeriod
+		st.ProvingPeriodStart = dlInfo.PeriodStart + WPoStProvingPeriod
 	}
 
 	deadlines, err := st.LoadDeadlines(store)
