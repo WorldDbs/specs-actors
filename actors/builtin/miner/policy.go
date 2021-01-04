@@ -9,7 +9,7 @@ import (
 	"github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 
-	"github.com/filecoin-project/specs-actors/v3/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
 )
 
 // The period over which a miner's active sectors are expected to be proven via WindowPoSt.
@@ -209,7 +209,7 @@ var FaultMaxAge = WPoStProvingPeriod * 14 // PARAM_SPEC
 const WorkerKeyChangeDelay = ChainFinality // PARAM_SPEC
 
 // Minimum number of epochs past the current epoch a sector may be set to expire.
-const MinSectorExpiration = 180 * builtin.EpochsInDay // PARAM_SPEC
+const MinSectorExpiration = 90 * builtin.EpochsInDay // PARAM_SPEC
 
 // The maximum number of epochs past the current epoch that sector lifetime may be extended.
 // A sector may be extended multiple times, however, the total maximum lifetime is also bounded by
