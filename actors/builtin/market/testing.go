@@ -12,8 +12,8 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
 )
 
 type DealSummary struct {
@@ -132,7 +132,7 @@ func CheckStateInvariants(st *State, store adt.Store, balance abi.TokenAmount, c
 
 			stats, found := proposalStats[abi.DealID(dealID)]
 			if !found {
-				acc.Addf("deal proposal %d for deal state not found", dealID)
+				acc.Addf("no deal proposal for deal state %d", dealID)
 			} else {
 				stats.SectorStartEpoch = dealState.SectorStartEpoch
 				stats.LastUpdatedEpoch = dealState.LastUpdatedEpoch
