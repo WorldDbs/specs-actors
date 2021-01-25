@@ -2,7 +2,6 @@ package builtin
 
 import (
 	stabi "github.com/filecoin-project/go-state-types/abi"
-	"github.com/filecoin-project/go-state-types/network"
 	"github.com/pkg/errors"
 )
 
@@ -17,40 +16,6 @@ const EpochsIn540Days = stabi.ChainEpoch(540 * EpochsInDay)
 
 // For V1_1 Stacked DRG sectors, the max is 5 years
 const EpochsInFiveYears = stabi.ChainEpoch(5 * EpochsInYear)
-
-var SealProofPoliciesV0 = map[stabi.RegisteredSealProof]*SealProofPolicy{
-	stabi.RegisteredSealProof_StackedDrg2KiBV1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg8MiBV1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg512MiBV1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg32GiBV1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg64GiBV1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-
-	stabi.RegisteredSealProof_StackedDrg2KiBV1_1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg8MiBV1_1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg512MiBV1_1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg32GiBV1_1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-	stabi.RegisteredSealProof_StackedDrg64GiBV1_1: {
-		SectorMaxLifetime: EpochsInFiveYears,
-	},
-}
 
 // 540-day maximum life time setting for V1 since network version 11
 var SealProofPoliciesV11 = map[stabi.RegisteredSealProof]*SealProofPolicy{
@@ -98,16 +63,8 @@ func SealProofWindowPoStPartitionSectors(p stabi.RegisteredSealProof) (uint64, e
 }
 
 // SectorMaximumLifetime is the maximum duration a sector sealed with this proof may exist between activation and expiration
-func SealProofSectorMaximumLifetime(p stabi.RegisteredSealProof, nv network.Version) (stabi.ChainEpoch, error) {
-	var info *SealProofPolicy
-	var ok bool
-
-	if nv < network.Version11 {
-		info, ok = SealProofPoliciesV0[p]
-	} else {
-		info, ok = SealProofPoliciesV11[p]
-	}
-
+func SealProofSectorMaximumLifetime(p stabi.RegisteredSealProof) (stabi.ChainEpoch, error) {
+	info, ok := SealProofPoliciesV11[p]
 	if !ok {
 		return 0, errors.Errorf("unsupported proof type: %v", p)
 	}
