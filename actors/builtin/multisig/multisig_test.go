@@ -14,12 +14,12 @@ import (
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/miner"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/multisig"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v4/support/mock"
-	tutil "github.com/filecoin-project/specs-actors/v4/support/testing"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/miner"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/multisig"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v5/support/mock"
+	tutil "github.com/filecoin-project/specs-actors/v5/support/testing"
 )
 
 func TestExports(t *testing.T) {
