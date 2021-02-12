@@ -9,26 +9,16 @@ import (
 
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/go-state-types/rt"
-	power2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
-	states2 "github.com/filecoin-project/specs-actors/v2/actors/states"
-	vm_test2 "github.com/filecoin-project/specs-actors/v2/support/vm"
-	states3 "github.com/filecoin-project/specs-actors/v3/actors/states"
-	vm_test3 "github.com/filecoin-project/specs-actors/v3/support/vm"
-	cid "github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/exported"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v4/actors/migration/nv10"
-	"github.com/filecoin-project/specs-actors/v4/actors/states"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v4/support/agent"
-	"github.com/filecoin-project/specs-actors/v4/support/ipld"
-	vm_test "github.com/filecoin-project/specs-actors/v4/support/vm"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v5/actors/states"
+	"github.com/filecoin-project/specs-actors/v5/support/agent"
+	"github.com/filecoin-project/specs-actors/v5/support/ipld"
+	"github.com/filecoin-project/specs-actors/v5/support/vm"
 )
 
 func TestCreate20Miners(t *testing.T) {
@@ -39,7 +29,7 @@ func TestCreate20Miners(t *testing.T) {
 	rnd := rand.New(rand.NewSource(42))
 
 	sim := agent.NewSim(ctx, t, newBlockStore, agent.SimConfig{Seed: rnd.Int63()})
-	accounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), minerCount, initialBalance, rnd.Int63())
+	accounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), minerCount, initialBalance, rnd.Int63())
 	sim.AddAgent(agent.NewMinerGenerator(
 		accounts,
 		agent.MinerAgentConfig{
@@ -80,7 +70,7 @@ func TestCreate20Miners(t *testing.T) {
 func Test500Epochs(t *testing.T) {
 	ctx := context.Background()
 	initialBalance := big.Mul(big.NewInt(1e8), big.NewInt(1e18))
-	cumulativeStats := make(vm_test.StatsByCall)
+	cumulativeStats := make(vm.StatsByCall)
 	minerCount := 10
 	clientCount := 9
 
@@ -92,7 +82,7 @@ func Test500Epochs(t *testing.T) {
 	})
 
 	// create miners
-	workerAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), minerCount, initialBalance, rnd.Int63())
+	workerAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), minerCount, initialBalance, rnd.Int63())
 	sim.AddAgent(agent.NewMinerGenerator(
 		workerAccounts,
 		agent.MinerAgentConfig{
@@ -109,7 +99,7 @@ func Test500Epochs(t *testing.T) {
 		rnd.Int63(),
 	))
 
-	clientAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), clientCount, initialBalance, rnd.Int63())
+	clientAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), clientCount, initialBalance, rnd.Int63())
 	dealAgents := agent.AddDealClientsForAccounts(sim, clientAccounts, rnd.Int63(), agent.DealClientConfig{
 		DealRate:         .05,
 		MinPieceSize:     1 << 29,
@@ -132,10 +122,10 @@ func Test500Epochs(t *testing.T) {
 				deals += da.DealCount
 			}
 
-			stateTree, err := getV3VM(t, sim).GetStateTree()
+			stateTree, err := getV5VM(t, sim).GetStateTree()
 			require.NoError(t, err)
 
-			totalBalance, err := getV3VM(t, sim).GetTotalActorBalance()
+			totalBalance, err := getV5VM(t, sim).GetTotalActorBalance()
 			require.NoError(t, err)
 
 			acc, err := states.CheckStateInvariants(stateTree, totalBalance, sim.GetVM().GetEpoch()-1)
@@ -149,8 +139,8 @@ func Test500Epochs(t *testing.T) {
 
 			fmt.Printf("Power at %d: raw: %v  cmtRaw: %v  cmtSecs: %d  msgs: %d  deals: %d  gets: %d  puts: %d  write bytes: %d  read bytes: %d\n",
 				epoch, pwrSt.TotalRawBytePower, pwrSt.TotalBytesCommitted, sectorCount.Uint64(),
-				sim.MessageCount, deals, getV3VM(t, sim).StoreReads(), getV3VM(t, sim).StoreWrites(),
-				getV3VM(t, sim).StoreReadBytes(), getV3VM(t, sim).StoreWriteBytes())
+				sim.MessageCount, deals, getV5VM(t, sim).StoreReads(), getV5VM(t, sim).StoreWrites(),
+				getV5VM(t, sim).StoreReadBytes(), getV5VM(t, sim).StoreWriteBytes())
 		}
 
 		cumulativeStats.MergeAllStats(sim.GetCallStats())
@@ -165,7 +155,7 @@ func TestCommitPowerAndCheckInvariants(t *testing.T) {
 
 	rnd := rand.New(rand.NewSource(42))
 	sim := agent.NewSim(ctx, t, newBlockStore, agent.SimConfig{Seed: rnd.Int63()})
-	accounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), minerCount, initialBalance, rnd.Int63())
+	accounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), minerCount, initialBalance, rnd.Int63())
 	sim.AddAgent(agent.NewMinerGenerator(
 		accounts,
 		agent.MinerAgentConfig{
@@ -187,154 +177,10 @@ func TestCommitPowerAndCheckInvariants(t *testing.T) {
 
 		epoch := sim.GetVM().GetEpoch()
 		if epoch%100 == 0 {
-			stateTree, err := getV3VM(t, sim).GetStateTree()
+			stateTree, err := getV5VM(t, sim).GetStateTree()
 			require.NoError(t, err)
 
-			totalBalance, err := getV3VM(t, sim).GetTotalActorBalance()
-			require.NoError(t, err)
-
-			acc, err := states.CheckStateInvariants(stateTree, totalBalance, sim.GetVM().GetEpoch()-1)
-			require.NoError(t, err)
-			require.True(t, acc.IsEmpty(), strings.Join(acc.Messages(), "\n"))
-
-			require.NoError(t, sim.GetVM().GetState(builtin.StoragePowerActorAddr, &pwrSt))
-
-			// assume each sector is 32Gb
-			sectorCount := big.Div(pwrSt.TotalBytesCommitted, big.NewInt(32<<30))
-
-			fmt.Printf("Power at %d: raw: %v  cmtRaw: %v  cmtSecs: %d  cnsMnrs: %d avgWins: %.3f  msgs: %d\n",
-				epoch, pwrSt.TotalRawBytePower, pwrSt.TotalBytesCommitted, sectorCount.Uint64(),
-				pwrSt.MinerAboveMinPowerCount, float64(sim.WinCount)/float64(epoch), sim.MessageCount)
-		}
-	}
-}
-
-func TestMigration(t *testing.T) {
-	t.Skip("slow")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	initialBalance := big.Mul(big.NewInt(1e8), big.NewInt(1e18))
-	minerCount := 10
-	clientCount := 9
-
-	blkStore := newBlockStore()
-	v := vm_test2.NewVMWithSingletons(ctx, t, blkStore)
-	v2VMFactory := func(ctx context.Context, impl vm_test2.ActorImplLookup, store adt.Store, stateRoot cid.Cid, epoch abi.ChainEpoch) (agent.SimVM, error) {
-		return vm_test2.NewVMAtEpoch(ctx, impl, store, stateRoot, epoch)
-	}
-	v2MinerFactory := func(ctx context.Context, root cid.Cid) (agent.SimMinerState, error) {
-		return &agent.MinerStateV2{
-			Ctx:  ctx,
-			Root: root,
-		}, nil
-	}
-
-	// set up sim
-	rnd := rand.New(rand.NewSource(42))
-	sim := agent.NewSimWithVM(ctx, t, v, v2VMFactory, agent.ComputePowerTableV2, blkStore, newBlockStore, v2MinerFactory, agent.SimConfig{
-		Seed:             rnd.Int63(),
-		CheckpointEpochs: 1000,
-	}, agent.CreateMinerParamsV2)
-
-	// create miners
-	workerAccounts := vm_test2.CreateAccounts(ctx, t, v, minerCount, initialBalance, rnd.Int63())
-	sim.AddAgent(agent.NewMinerGenerator(
-		workerAccounts,
-		agent.MinerAgentConfig{
-			PrecommitRate:    2.0,
-			FaultRate:        0.00001,
-			RecoveryRate:     0.0001,
-			UpgradeSectors:   true,
-			ProofType:        abi.RegisteredSealProof_StackedDrg32GiBV1_1,
-			StartingBalance:  big.Div(initialBalance, big.NewInt(2)),
-			MinMarketBalance: big.NewInt(1e18),
-			MaxMarketBalance: big.NewInt(2e18),
-		},
-		1.0, // create miner probability of 1 means a new miner is created every tick
-		rnd.Int63(),
-	))
-
-	clientAccounts := vm_test2.CreateAccounts(ctx, t, v, clientCount, initialBalance, rnd.Int63())
-	agent.AddDealClientsForAccounts(sim, clientAccounts, rnd.Int63(), agent.DealClientConfig{
-		DealRate:         .05,
-		MinPieceSize:     1 << 29,
-		MaxPieceSize:     32 << 30,
-		MinStoragePrice:  big.Zero(),
-		MaxStoragePrice:  abi.NewTokenAmount(200_000_000),
-		MinMarketBalance: big.NewInt(1e18),
-		MaxMarketBalance: big.NewInt(2e18),
-	})
-
-	// Run v2 for 5000 epochs
-	var pwrSt power2.State
-	for i := 0; i < 5000; i++ {
-		require.NoError(t, sim.Tick())
-		epoch := sim.GetVM().GetEpoch()
-		if epoch%100 == 0 {
-			stateTree, err := states2.LoadTree(sim.GetVM().Store(), sim.GetVM().StateRoot())
-			require.NoError(t, err)
-
-			totalBalance, err := sim.GetVM().GetTotalActorBalance()
-			require.NoError(t, err)
-
-			acc, err := states2.CheckStateInvariants(stateTree, totalBalance, sim.GetVM().GetEpoch()-1)
-			require.NoError(t, err)
-			require.True(t, acc.IsEmpty(), strings.Join(acc.Messages(), "\n"))
-
-			require.NoError(t, sim.GetVM().GetState(builtin.StoragePowerActorAddr, &pwrSt))
-
-			// assume each sector is 32Gb
-			sectorCount := big.Div(pwrSt.TotalBytesCommitted, big.NewInt(32<<30))
-
-			fmt.Printf("Power at %d: raw: %v  cmtRaw: %v  cmtSecs: %d  cnsMnrs: %d avgWins: %.3f  msgs: %d\n",
-				epoch, pwrSt.TotalRawBytePower, pwrSt.TotalBytesCommitted, sectorCount.Uint64(),
-				pwrSt.MinerAboveMinPowerCount, float64(sim.WinCount)/float64(epoch), sim.MessageCount)
-		}
-	}
-
-	// Migrate
-	v2 := sim.GetVM()
-	log := nv10.TestLogger{TB: t}
-	priorEpoch := v2.GetEpoch() - 1 // on tick sim internally creates new vm with epoch set to the next one
-	nextRoot, err := nv10.MigrateStateTree(ctx, v2.Store(), v2.StateRoot(), priorEpoch, nv10.Config{MaxWorkers: 1}, log, nv10.NewMemMigrationCache())
-	require.NoError(t, err)
-
-	lookup := map[cid.Cid]rt.VMActor{}
-	for _, ba := range exported.BuiltinActors() {
-		lookup[ba.Code()] = ba
-	}
-
-	v3, err := vm_test3.NewVMAtEpoch(ctx, lookup, v2.Store(), nextRoot, priorEpoch+1)
-	require.NoError(t, err)
-
-	stateTree, err := v3.GetStateTree()
-	require.NoError(t, err)
-	totalBalance, err := v3.GetTotalActorBalance()
-	require.NoError(t, err)
-	msgs, err := states3.CheckStateInvariants(stateTree, totalBalance, priorEpoch)
-	require.NoError(t, err)
-	assert.Zero(t, len(msgs.Messages()), strings.Join(msgs.Messages(), "\n"))
-
-	v3VMFactory := func(ctx context.Context, impl vm_test2.ActorImplLookup, store adt.Store, stateRoot cid.Cid, epoch abi.ChainEpoch) (agent.SimVM, error) {
-		return vm_test.NewVMAtEpoch(ctx, vm_test.ActorImplLookup(impl), store, stateRoot, epoch)
-	}
-	v3MinerFactory := func(ctx context.Context, root cid.Cid) (agent.SimMinerState, error) {
-		return &agent.MinerStateV3{
-			Ctx:  ctx,
-			Root: root,
-		}, nil
-	}
-	sim.SwapVM(v3, agent.VMFactoryFunc(v3VMFactory), v3MinerFactory, agent.ComputePowerTableV3, agent.CreateMinerParamsV3)
-
-	// Run v3 for 5000 epochs
-	for i := 0; i < 5000; i++ {
-		require.NoError(t, sim.Tick())
-		epoch := sim.GetVM().GetEpoch()
-		if epoch%100 == 0 {
-			stateTree, err := states.LoadTree(sim.GetVM().Store(), sim.GetVM().StateRoot())
-			require.NoError(t, err)
-
-			totalBalance, err := sim.GetVM().GetTotalActorBalance()
+			totalBalance, err := getV5VM(t, sim).GetTotalActorBalance()
 			require.NoError(t, err)
 
 			acc, err := states.CheckStateInvariants(stateTree, totalBalance, sim.GetVM().GetEpoch()-1)
@@ -351,14 +197,13 @@ func TestMigration(t *testing.T) {
 				pwrSt.MinerAboveMinPowerCount, float64(sim.WinCount)/float64(epoch), sim.MessageCount)
 		}
 	}
-
 }
 
 func TestCommitAndCheckReadWriteStats(t *testing.T) {
 	t.Skip("this is slow")
 	ctx := context.Background()
 	initialBalance := big.Mul(big.NewInt(1e8), big.NewInt(1e18))
-	cumulativeStats := make(vm_test.StatsByCall)
+	cumulativeStats := make(vm.StatsByCall)
 	minerCount := 10
 	clientCount := 9
 
@@ -370,7 +215,7 @@ func TestCommitAndCheckReadWriteStats(t *testing.T) {
 	})
 
 	// create miners
-	workerAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), minerCount, initialBalance, rnd.Int63())
+	workerAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), minerCount, initialBalance, rnd.Int63())
 	sim.AddAgent(agent.NewMinerGenerator(
 		workerAccounts,
 		agent.MinerAgentConfig{
@@ -387,7 +232,7 @@ func TestCommitAndCheckReadWriteStats(t *testing.T) {
 		rnd.Int63(),
 	))
 
-	clientAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), clientCount, initialBalance, rnd.Int63())
+	clientAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), clientCount, initialBalance, rnd.Int63())
 	dealAgents := agent.AddDealClientsForAccounts(sim, clientAccounts, rnd.Int63(), agent.DealClientConfig{
 		DealRate:         .05,
 		MinPieceSize:     1 << 29,
@@ -417,8 +262,8 @@ func TestCommitAndCheckReadWriteStats(t *testing.T) {
 
 			fmt.Printf("Power at %d: raw: %v  cmtRaw: %v  cmtSecs: %d  msgs: %d  deals: %d  gets: %d  puts: %d  write bytes: %d  read bytes: %d\n",
 				epoch, pwrSt.TotalRawBytePower, pwrSt.TotalBytesCommitted, sectorCount.Uint64(),
-				sim.MessageCount, deals, getV3VM(t, sim).StoreReads(), getV3VM(t, sim).StoreWrites(),
-				getV3VM(t, sim).StoreReadBytes(), getV3VM(t, sim).StoreWriteBytes())
+				sim.MessageCount, deals, getV5VM(t, sim).StoreReads(), getV5VM(t, sim).StoreWrites(),
+				getV5VM(t, sim).StoreReadBytes(), getV5VM(t, sim).StoreWriteBytes())
 		}
 
 		cumulativeStats.MergeAllStats(sim.GetCallStats())
@@ -427,7 +272,7 @@ func TestCommitAndCheckReadWriteStats(t *testing.T) {
 			for method, stats := range cumulativeStats {
 				printCallStats(method, stats, "")
 			}
-			cumulativeStats = make(vm_test.StatsByCall)
+			cumulativeStats = make(vm.StatsByCall)
 		}
 	}
 }
@@ -444,7 +289,7 @@ func TestCreateDeals(t *testing.T) {
 	sim := agent.NewSim(ctx, t, newBlockStore, agent.SimConfig{Seed: rnd.Int63()})
 
 	// create miners
-	workerAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), minerCount, initialBalance, rnd.Int63())
+	workerAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), minerCount, initialBalance, rnd.Int63())
 	sim.AddAgent(agent.NewMinerGenerator(
 		workerAccounts,
 		agent.MinerAgentConfig{
@@ -460,7 +305,7 @@ func TestCreateDeals(t *testing.T) {
 		rnd.Int63(),
 	))
 
-	clientAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), clientCount, initialBalance, rnd.Int63())
+	clientAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), clientCount, initialBalance, rnd.Int63())
 	dealAgents := agent.AddDealClientsForAccounts(sim, clientAccounts, rnd.Int63(), agent.DealClientConfig{
 		DealRate:         .01,
 		MinPieceSize:     1 << 29,
@@ -477,10 +322,10 @@ func TestCreateDeals(t *testing.T) {
 
 		epoch := sim.GetVM().GetEpoch()
 		if epoch%100 == 0 {
-			stateTree, err := getV3VM(t, sim).GetStateTree()
+			stateTree, err := getV5VM(t, sim).GetStateTree()
 			require.NoError(t, err)
 
-			totalBalance, err := getV3VM(t, sim).GetTotalActorBalance()
+			totalBalance, err := getV5VM(t, sim).GetTotalActorBalance()
 			require.NoError(t, err)
 
 			acc, err := states.CheckStateInvariants(stateTree, totalBalance, sim.GetVM().GetEpoch()-1)
@@ -517,7 +362,7 @@ func TestCCUpgrades(t *testing.T) {
 	sim := agent.NewSim(ctx, t, newBlockStore, agent.SimConfig{Seed: rnd.Int63()})
 
 	// create miners
-	workerAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), minerCount, initialBalance, rnd.Int63())
+	workerAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), minerCount, initialBalance, rnd.Int63())
 	sim.AddAgent(agent.NewMinerGenerator(
 		workerAccounts,
 		agent.MinerAgentConfig{
@@ -534,7 +379,7 @@ func TestCCUpgrades(t *testing.T) {
 		rnd.Int63(),
 	))
 
-	clientAccounts := vm_test.CreateAccounts(ctx, t, getV3VM(t, sim), clientCount, initialBalance, rnd.Int63())
+	clientAccounts := vm.CreateAccounts(ctx, t, getV5VM(t, sim), clientCount, initialBalance, rnd.Int63())
 	agent.AddDealClientsForAccounts(sim, clientAccounts, rnd.Int63(), agent.DealClientConfig{
 		DealRate:         .01,
 		MinPieceSize:     1 << 29,
@@ -551,10 +396,10 @@ func TestCCUpgrades(t *testing.T) {
 
 		epoch := sim.GetVM().GetEpoch()
 		if epoch%100 == 0 {
-			stateTree, err := getV3VM(t, sim).GetStateTree()
+			stateTree, err := getV5VM(t, sim).GetStateTree()
 			require.NoError(t, err)
 
-			totalBalance, err := getV3VM(t, sim).GetTotalActorBalance()
+			totalBalance, err := getV5VM(t, sim).GetTotalActorBalance()
 			require.NoError(t, err)
 
 			acc, err := states.CheckStateInvariants(stateTree, totalBalance, sim.GetVM().GetEpoch()-1)
@@ -591,7 +436,7 @@ func newBlockStore() cbor.IpldBlockstore {
 	return ipld.NewBlockStoreInMemory()
 }
 
-func printCallStats(method vm_test.MethodKey, stats *vm_test.CallStats, indent string) { // nolint:unused
+func printCallStats(method vm.MethodKey, stats *vm.CallStats, indent string) { // nolint:unused
 	fmt.Printf("%s%v:%d: calls: %d  gets: %d  puts: %d  read: %d  written: %d  avg gets: %.2f, avg puts: %.2f\n",
 		indent, builtin.ActorNameByCode(method.Code), method.Method, stats.Calls, stats.Reads, stats.Writes,
 		stats.ReadBytes, stats.WriteBytes, float32(stats.Reads)/float32(stats.Calls),
@@ -606,8 +451,8 @@ func printCallStats(method vm_test.MethodKey, stats *vm_test.CallStats, indent s
 	}
 }
 
-func getV3VM(t *testing.T, sim *agent.Sim) *vm_test.VM {
-	vm, ok := sim.GetVM().(*vm_test.VM)
+func getV5VM(t *testing.T, sim *agent.Sim) *vm.VM {
+	vm, ok := sim.GetVM().(*vm.VM)
 	require.True(t, ok)
 	return vm
 }
