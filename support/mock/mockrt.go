@@ -21,12 +21,12 @@ import (
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/exported"
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v4/support/ipld"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/exported"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v5/support/ipld"
 )
 
 // A mock runtime for unit testing of actors in isolation.
@@ -72,21 +72,28 @@ type Runtime struct {
 	expectVerifySigs               []*expectVerifySig
 	expectCreateActor              *expectCreateActor
 	expectVerifySeal               *expectVerifySeal
-	expectComputeUnsealedSectorCID *expectComputeUnsealedSectorCID
+	expectComputeUnsealedSectorCID []*expectComputeUnsealedSectorCID
 	expectVerifyPoSt               *expectVerifyPoSt
 	expectVerifyConsensusFault     *expectVerifyConsensusFault
 	expectDeleteActor              *addr.Address
 	expectBatchVerifySeals         *expectBatchVerifySeals
+	expectAggregateVerifySeals     *expectAggregateVerifySeals
+	// Gas charged explicitly through rt.ChargeGas. Note: most charges are implicit
+	expectGasCharged []int64
 
 	logs []string
-	// Gas charged explicitly through rt.ChargeGas. Note: most charges are implicit
-	gasCharged int64
 }
 
 type expectBatchVerifySeals struct {
 	in  map[addr.Address][]proof.SealVerifyInfo
 	out map[addr.Address][]bool
 	err error
+}
+
+type expectAggregateVerifySeals struct {
+	inSVIs  []proof.AggregateSealVerifyInfo
+	inProof []byte
+	err     error
 }
 
 type expectRandomness struct {
@@ -577,22 +584,22 @@ func (rt *Runtime) HashBlake2b(data []byte) [32]byte {
 }
 
 func (rt *Runtime) ComputeUnsealedSectorCID(reg abi.RegisteredSealProof, pieces []abi.PieceInfo) (cid.Cid, error) {
-	exp := rt.expectComputeUnsealedSectorCID
-	if exp != nil {
-		if !reflect.DeepEqual(exp.reg, reg) {
-			rt.failTest("unexpected ComputeUnsealedSectorCID proof, expected: %v, got: %v", exp.reg, reg)
-		}
-		if !reflect.DeepEqual(exp.pieces, pieces) {
-			rt.failTest("unexpected ComputeUnsealedSectorCID pieces, expected: %v, got: %v", exp.pieces, pieces)
-		}
-
-		defer func() {
-			rt.expectComputeUnsealedSectorCID = nil
-		}()
-		return exp.cid, exp.resultErr
+	if len(rt.expectComputeUnsealedSectorCID) == 0 {
+		rt.failTestNow("unexpected syscall to ComputeUnsealedSectorCID %v", reg)
 	}
-	rt.failTestNow("unexpected syscall to ComputeUnsealedSectorCID %v", reg)
-	return cid.Cid{}, nil
+	exp := rt.expectComputeUnsealedSectorCID[0]
+
+	if !reflect.DeepEqual(exp.reg, reg) {
+		rt.failTest("unexpected ComputeUnsealedSectorCID proof, expected: %v, got: %v", exp.reg, reg)
+	}
+	if !reflect.DeepEqual(exp.pieces, pieces) {
+		rt.failTest("unexpected ComputeUnsealedSectorCID pieces, expected: %v, got: %v", exp.pieces, pieces)
+	}
+	defer func() {
+		rt.expectComputeUnsealedSectorCID = rt.expectComputeUnsealedSectorCID[1:]
+	}()
+
+	return exp.cid, exp.resultErr
 }
 
 func (rt *Runtime) VerifySeal(seal proof.SealVerifyInfo) error {
@@ -611,12 +618,6 @@ func (rt *Runtime) VerifySeal(seal proof.SealVerifyInfo) error {
 	}
 	rt.failTestNow("unexpected syscall to verify seal %v", seal)
 	return nil
-}
-
-func (rt *Runtime) ExpectBatchVerifySeals(in map[addr.Address][]proof.SealVerifyInfo, out map[addr.Address][]bool, err error) {
-	rt.expectBatchVerifySeals = &expectBatchVerifySeals{
-		in, out, err,
-	}
 }
 
 func (rt *Runtime) BatchVerifySeals(vis map[addr.Address][]proof.SealVerifyInfo) (map[addr.Address][]bool, error) {
@@ -658,6 +659,29 @@ func (rt *Runtime) BatchVerifySeals(vis map[addr.Address][]proof.SealVerifyInfo)
 	}
 	rt.failTestNow("unexpected syscall to batch verify seals with %v", vis)
 	return nil, nil
+}
+
+func (rt *Runtime) VerifyAggregateSeals(agg proof.AggregateSealVerifyProofAndInfos) error {
+	exp := rt.expectAggregateVerifySeals
+	if exp != nil {
+		if len(agg.Infos) != len(exp.inSVIs) {
+			rt.failTest("length mismatch, expected: %v, actual: %v", exp.inSVIs, agg.Infos)
+		}
+		for i, expVI := range exp.inSVIs {
+			if agg.Infos[i].SealedCID != expVI.SealedCID {
+				rt.failTest("sealed cid %s does not match expected %s", agg.Infos[i].SealedCID, expVI.SealedCID)
+			}
+			if agg.Infos[i].UnsealedCID != expVI.UnsealedCID {
+				rt.failTest("unsealed cid %s does not match expected %s", agg.Infos[i].UnsealedCID, expVI.UnsealedCID)
+			}
+		}
+		defer func() {
+			rt.expectAggregateVerifySeals = nil
+		}()
+		return nil
+	}
+	rt.failTestNow("unexpected syscall to verify aggregate seals: %v", agg)
+	return nil
 }
 
 func (rt *Runtime) VerifyPoSt(vi proof.WindowPoStVerifyInfo) error {
@@ -765,28 +789,33 @@ func (rt *Runtime) SetAddressActorType(address addr.Address, actorType cid.Cid) 
 	rt.actorCodeCIDs[address] = actorType
 }
 
-func (rt *Runtime) SetBalance(amt abi.TokenAmount) {
+func (rt *Runtime) SetBalance(amt abi.TokenAmount) abi.TokenAmount {
 	rt.balance = amt
+	return amt
 }
 
-func (rt *Runtime) SetReceived(amt abi.TokenAmount) {
+func (rt *Runtime) SetReceived(amt abi.TokenAmount) abi.TokenAmount {
 	rt.valueReceived = amt
+	return amt
 }
 
-func (rt *Runtime) SetNetworkVersion(v network.Version) {
+func (rt *Runtime) SetNetworkVersion(v network.Version) network.Version {
 	rt.networkVersion = v
+	return v
 }
 
-func (rt *Runtime) SetEpoch(epoch abi.ChainEpoch) {
+func (rt *Runtime) SetEpoch(epoch abi.ChainEpoch) abi.ChainEpoch {
 	rt.epoch = epoch
+	return epoch
 }
 
 func (rt *Runtime) ReplaceState(o cbor.Marshaler) {
 	rt.state = rt.StorePut(o)
 }
 
-func (rt *Runtime) SetCirculatingSupply(amt abi.TokenAmount) {
+func (rt *Runtime) SetCirculatingSupply(amt abi.TokenAmount) abi.TokenAmount {
 	rt.circulatingSupply = amt
+	return amt
 }
 
 func (rt *Runtime) AddIDAddress(src addr.Address, target addr.Address) {
@@ -797,6 +826,10 @@ func (rt *Runtime) AddIDAddress(src addr.Address, target addr.Address) {
 func (rt *Runtime) SetNewActorAddress(actAddr addr.Address) {
 	rt.require(actAddr.Protocol() == addr.Actor, "new actor address must be protocol: Actor, got protocol: %v", actAddr.Protocol())
 	rt.newActorAddr = actAddr
+}
+
+func (rt *Runtime) SetHasher(f func(data []byte) [32]byte) {
+	rt.hashfunc = f
 }
 
 func (rt *Runtime) ExpectValidateCallerAny() {
@@ -866,10 +899,6 @@ func (rt *Runtime) ExpectDeleteActor(beneficiary addr.Address) {
 	rt.expectDeleteActor = &beneficiary
 }
 
-func (rt *Runtime) SetHasher(f func(data []byte) [32]byte) {
-	rt.hashfunc = f
-}
-
 func (rt *Runtime) ExpectVerifySeal(seal proof.SealVerifyInfo, result error) {
 	rt.expectVerifySeal = &expectVerifySeal{
 		seal:   seal,
@@ -877,10 +906,22 @@ func (rt *Runtime) ExpectVerifySeal(seal proof.SealVerifyInfo, result error) {
 	}
 }
 
-func (rt *Runtime) ExpectComputeUnsealedSectorCID(reg abi.RegisteredSealProof, pieces []abi.PieceInfo, cid cid.Cid, err error) {
-	rt.expectComputeUnsealedSectorCID = &expectComputeUnsealedSectorCID{
-		reg, pieces, cid, err,
+func (rt *Runtime) ExpectBatchVerifySeals(in map[addr.Address][]proof.SealVerifyInfo, out map[addr.Address][]bool, err error) {
+	rt.expectBatchVerifySeals = &expectBatchVerifySeals{
+		in, out, err,
 	}
+}
+
+func (rt *Runtime) ExpectAggregateVerifySeals(agg proof.AggregateSealVerifyProofAndInfos, err error) {
+	rt.expectAggregateVerifySeals = &expectAggregateVerifySeals{
+		agg.Infos, agg.Proof, err,
+	}
+}
+
+func (rt *Runtime) ExpectComputeUnsealedSectorCID(reg abi.RegisteredSealProof, pieces []abi.PieceInfo, cid cid.Cid, err error) {
+	rt.expectComputeUnsealedSectorCID = append(rt.expectComputeUnsealedSectorCID, &expectComputeUnsealedSectorCID{
+		reg, pieces, cid, err,
+	})
 }
 
 func (rt *Runtime) ExpectVerifyPoSt(post proof.WindowPoStVerifyInfo, result error) {
@@ -925,6 +966,13 @@ func (rt *Runtime) Verify() {
 	if len(rt.expectVerifySigs) > 0 {
 		rt.failTest("missing expected verify signature %v", rt.expectVerifySigs)
 	}
+	if len(rt.expectComputeUnsealedSectorCID) > 0 {
+		rt.failTest("missing expected ComputeUnsealedSectorCID with %v", rt.expectComputeUnsealedSectorCID)
+	}
+	if len(rt.expectGasCharged) > 0 {
+		rt.failTest("missing expected gas charge(s) %v", rt.expectGasCharged)
+	}
+
 	if rt.expectCreateActor != nil {
 		rt.failTest("missing expected create actor with code %s, address %s",
 			rt.expectCreateActor.codeId, rt.expectCreateActor.address)
@@ -938,8 +986,8 @@ func (rt *Runtime) Verify() {
 		rt.failTest("missing expected batch verify seals with %v", rt.expectBatchVerifySeals)
 	}
 
-	if rt.expectComputeUnsealedSectorCID != nil {
-		rt.failTest("missing expected ComputeUnsealedSectorCID with %v", rt.expectComputeUnsealedSectorCID)
+	if rt.expectAggregateVerifySeals != nil {
+		rt.failTest("missing expected aggregate verify seals with %v", rt.expectAggregateVerifySeals)
 	}
 
 	if rt.expectVerifyPoSt != nil {
@@ -1020,9 +1068,7 @@ func (rt *Runtime) ClearLogs() {
 }
 
 func (rt *Runtime) ExpectGasCharged(gas int64) {
-	if gas != rt.gasCharged {
-		rt.failTest("expected gas charged: %d, actual gas charged: %d", gas, rt.gasCharged)
-	}
+	rt.expectGasCharged = append(rt.expectGasCharged, gas)
 }
 
 func (rt *Runtime) Call(method interface{}, params interface{}) interface{} {
@@ -1103,7 +1149,16 @@ func (rt *Runtime) failTestNow(msg string, args ...interface{}) {
 }
 
 func (rt *Runtime) ChargeGas(_ string, gas, _ int64) {
-	rt.gasCharged += gas
+	if len(rt.expectGasCharged) == 0 {
+		rt.failTest("unexpected gas charge %d", gas)
+	}
+	defer func() {
+		rt.expectGasCharged = rt.expectGasCharged[1:]
+	}()
+	expectedGas := rt.expectGasCharged[0]
+	if gas != expectedGas {
+		rt.failTest("expected gas charged: %d, actual gas charged: %d", gas, expectedGas)
+	}
 }
 
 func getMethodName(code cid.Cid, num abi.MethodNum) string {
