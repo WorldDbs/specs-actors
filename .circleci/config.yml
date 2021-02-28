@@ -76,6 +76,7 @@ jobs:
             make test-coverage
             mkdir -p /tmp/artifacts
             mv coverage.out /tmp/artifacts/coverage.out
+            make test-migration
       - codecov/upload:
           file: /tmp/artifacts/coverage.out
       - store_artifacts:
