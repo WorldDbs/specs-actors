@@ -7,10 +7,8 @@ import (
 	"github.com/filecoin-project/go-state-types/cbor"
 	"github.com/pkg/errors"
 
-	power2 "github.com/filecoin-project/specs-actors/v2/actors/builtin/power"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
-	power3 "github.com/filecoin-project/specs-actors/v4/actors/builtin/power"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin/power"
 )
 
 // MinerGenerator adds miner agents to the simulation at a configured rate.
@@ -75,14 +73,9 @@ func (mg *MinerGenerator) createMiner(owner address.Address, cfg MinerAgentConfi
 			}
 
 			var worker, owner address.Address
-			params, okV3 := msg.Params.(*power3.CreateMinerParams)
-			if !okV3 {
-				params, okV2 := msg.Params.(*power2.CreateMinerParams)
-				if !okV2 {
-					return errors.Errorf("create miner params has wrong type: %v", msg.Params)
-				}
-				worker = params.Worker
-				owner = params.Owner
+			params, ok := msg.Params.(*power.CreateMinerParams)
+			if !ok {
+				return errors.Errorf("create miner params has wrong type: %v", msg.Params)
 			} else {
 				worker = params.Worker
 				owner = params.Owner
