@@ -1,4 +1,4 @@
-package vm_test
+package vm
 
 import (
 	"bytes"
@@ -21,17 +21,19 @@ import (
 	"github.com/minio/blake2b-simd"
 	"github.com/pkg/errors"
 
-	"github.com/filecoin-project/specs-actors/v4/actors/builtin"
-	init_ "github.com/filecoin-project/specs-actors/v4/actors/builtin/init"
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime"
-	"github.com/filecoin-project/specs-actors/v4/actors/runtime/proof"
-	"github.com/filecoin-project/specs-actors/v4/actors/states"
-	"github.com/filecoin-project/specs-actors/v4/actors/util/adt"
-	"github.com/filecoin-project/specs-actors/v4/support/ipld"
-	"github.com/filecoin-project/specs-actors/v4/support/testing"
+	"github.com/filecoin-project/specs-actors/v5/actors/builtin"
+	init_ "github.com/filecoin-project/specs-actors/v5/actors/builtin/init"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime"
+	"github.com/filecoin-project/specs-actors/v5/actors/runtime/proof"
+	"github.com/filecoin-project/specs-actors/v5/actors/states"
+	"github.com/filecoin-project/specs-actors/v5/actors/util/adt"
+	"github.com/filecoin-project/specs-actors/v5/support/ipld"
+	"github.com/filecoin-project/specs-actors/v5/support/testing"
 )
 
 var EmptyObjectCid cid.Cid
+
+const defaultGasLimit = 5_000_000_000
 
 // Context for an individual message invocation, including inter-actor sends.
 type invocationContext struct {
@@ -56,6 +58,25 @@ type topLevelContext struct {
 	newActorAddressCount    uint64          // Count of calls to NewActorAddress (mutable).
 	statsSource             StatsSource     // optional source of external statistics that can be used to profile calls
 	circSupply              abi.TokenAmount // default or externally specified circulating FIL supply
+	// Gas tracking fields
+	gasPrices    Pricelist
+	gasUsed      int64
+	gasAvailable int64
+}
+
+func (tc *topLevelContext) chargeGas(gas GasCharge) {
+	toUse := gas.Total()
+	if tc.gasUsed > tc.gasAvailable-toUse {
+		gasUsed := tc.gasUsed
+		tc.gasUsed = tc.gasAvailable
+		panic(
+			abort{
+				exitcode.SysErrOutOfGas,
+				fmt.Sprintf("not enough gas: used=%d, available=%d, attempt to use=%d", gasUsed, tc.gasAvailable, toUse),
+			},
+		)
+	}
+	tc.gasUsed += toUse
 }
 
 func newInvocationContext(rt *VM, topLevel *topLevelContext, msg InternalMessage, fromActor *states.Actor, emptyObject cid.Cid) invocationContext {
@@ -84,9 +105,9 @@ func (ic *invocationContext) loadState(obj cbor.Unmarshaler) cid.Cid {
 	if !c.Defined() {
 		ic.Abortf(exitcode.SysErrorIllegalActor, "failed to load undefined state, must construct first")
 	}
-	err := ic.rt.store.Get(ic.rt.ctx, c, obj)
-	if err != nil {
-		panic(errors.Wrapf(err, "failed to load state for actor %s, CID %s", ic.msg.to, c))
+	found := ic.StoreGet(c, obj)
+	if !found {
+		panic(fmt.Errorf("state not found for actor %s, CID %s", ic.msg.to, c))
 	}
 	return c
 }
@@ -117,11 +138,21 @@ var _ runtime.Runtime = (*invocationContext)(nil)
 
 // Store implements runtime.Runtime.
 func (ic *invocationContext) StoreGet(c cid.Cid, o cbor.Unmarshaler) bool {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnIpldGet())
 	sw := &storeWrapper{s: ic.rt.store, rt: ic.rt}
 	return sw.StoreGet(c, o)
 }
 
 func (ic *invocationContext) StorePut(x cbor.Marshaler) cid.Cid {
+	// Serialize before putting data to charge gas
+	// This could be made more efficient by avoiding double serialization
+	// with a gas charging block store but this is easier for testing
+	var buf bytes.Buffer
+	err := x.MarshalCBOR(&buf)
+	if err != nil {
+		ic.rt.Abortf(exitcode.ErrIllegalState, "could not put object in store")
+	}
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnIpldPut(len(buf.Bytes())))
 	sw := &storeWrapper{s: ic.rt.store, rt: ic.rt}
 	return sw.StorePut(x)
 }
@@ -147,10 +178,7 @@ func (ic *invocationContext) StateCreate(obj cbor.Marshaler) {
 	if actr.Head.Defined() && !ic.emptyObject.Equals(actr.Head) {
 		ic.Abortf(exitcode.SysErrorIllegalActor, "failed to construct actor state: already initialized")
 	}
-	c, err := ic.rt.store.Put(ic.rt.ctx, obj)
-	if err != nil {
-		ic.Abortf(exitcode.ErrIllegalState, "failed to create actor state")
-	}
+	c := ic.StorePut(obj)
 	actr.Head = c
 	ic.storeActor(actr)
 	ic.stateUsedObjs[obj] = c // Track the expected CID of the object.
@@ -183,30 +211,45 @@ func (ic *invocationContext) StateTransaction(obj cbor.Er, f func()) {
 }
 
 func (ic *invocationContext) VerifySignature(signature crypto.Signature, signer address.Address, plaintext []byte) error {
+	charge, err := ic.topLevel.gasPrices.OnVerifySignature(signature.Type, len(plaintext))
+	if err != nil {
+		return err
+	}
+	ic.topLevel.chargeGas(charge)
 	return ic.Syscalls().VerifySignature(signature, signer, plaintext)
 }
 
 func (ic *invocationContext) HashBlake2b(data []byte) [32]byte {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnHashing(len(data)))
 	return ic.Syscalls().HashBlake2b(data)
 }
 
 func (ic *invocationContext) ComputeUnsealedSectorCID(reg abi.RegisteredSealProof, pieces []abi.PieceInfo) (cid.Cid, error) {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnComputeUnsealedSectorCid(reg, pieces))
 	return ic.Syscalls().ComputeUnsealedSectorCID(reg, pieces)
 }
 
 func (ic *invocationContext) VerifySeal(vi proof.SealVerifyInfo) error {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnVerifySeal(vi))
 	return ic.Syscalls().VerifySeal(vi)
 }
 
 func (ic *invocationContext) BatchVerifySeals(vis map[address.Address][]proof.SealVerifyInfo) (map[address.Address][]bool, error) {
+	// no explicit gas charged
 	return ic.Syscalls().BatchVerifySeals(vis)
 }
 
+func (ic *invocationContext) VerifyAggregateSeals(agg proof.AggregateSealVerifyProofAndInfos) error {
+	return ic.Syscalls().VerifyAggregateSeals(agg)
+}
+
 func (ic *invocationContext) VerifyPoSt(vi proof.WindowPoStVerifyInfo) error {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnVerifyPost(vi))
 	return ic.Syscalls().VerifyPoSt(vi)
 }
 
 func (ic *invocationContext) VerifyConsensusFault(h1, h2, extra []byte) (*runtime.ConsensusFault, error) {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnVerifyConsensusFault())
 	return ic.Syscalls().VerifyConsensusFault(h1, h2, extra)
 }
 
@@ -343,6 +386,7 @@ func (ic *invocationContext) Send(toAddr address.Address, methodNum abi.MethodNu
 	newCtx := newInvocationContext(ic.rt, ic.topLevel, newMsg, fromActor, ic.emptyObject)
 	ret, code := newCtx.invoke()
 
+	ic.topLevel.gasUsed = newCtx.topLevel.gasUsed
 	ic.stats.MergeSubStat(newCtx.toActor.Code, newMsg.method, newCtx.stats)
 
 	err = ret.Into(out)
@@ -354,6 +398,7 @@ func (ic *invocationContext) Send(toAddr address.Address, methodNum abi.MethodNu
 
 // CreateActor implements runtime.ExtendedInvocationContext.
 func (ic *invocationContext) CreateActor(codeID cid.Cid, addr address.Address) {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnCreateActor())
 	act, ok := ic.rt.ActorImpls[codeID]
 	if !ok {
 		ic.Abortf(exitcode.SysErrorIllegalArgument, "Can only create built-in actors.")
@@ -388,6 +433,7 @@ func (ic *invocationContext) CreateActor(codeID cid.Cid, addr address.Address) {
 
 // deleteActor implements runtime.ExtendedInvocationContext.
 func (ic *invocationContext) DeleteActor(beneficiary address.Address) {
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnDeleteActor())
 	receiver := ic.msg.to
 	receiverActor, found, err := ic.rt.GetActor(receiver)
 	if err != nil {
@@ -417,8 +463,12 @@ func (ic *invocationContext) Context() context.Context {
 	return ic.rt.ctx
 }
 
-func (ic *invocationContext) ChargeGas(_ string, _ int64, _ int64) {
-	// no-op
+func (ic *invocationContext) ChargeGas(name string, compute int64, virtual int64) {
+	ic.topLevel.chargeGas(GasCharge{
+		Name:           name,
+		ComputeGas:     compute,
+		VirtualCompute: virtual,
+	})
 }
 
 // Starts a new tracing span. The span must be End()ed explicitly, typically with a deferred invocation.
@@ -487,6 +537,10 @@ func (s fakeSyscalls) BatchVerifySeals(vi map[address.Address][]proof.SealVerify
 		res[addr] = verified
 	}
 	return res, nil
+}
+
+func (s fakeSyscalls) VerifyAggregateSeals(agg proof.AggregateSealVerifyProofAndInfos) error {
+	return nil
 }
 
 func (s fakeSyscalls) VerifyPoSt(_ proof.WindowPoStVerifyInfo) error {
@@ -573,10 +627,11 @@ func (ic *invocationContext) invoke() (ret returnWrapper, errcode exitcode.ExitC
 
 	// pre-dispatch
 	// 1. load target actor
-	// 2. transfer optional funds
-	// 3. short-circuit _Send_ method
-	// 4. load target actor code
-	// 5. create target state handle
+	// 2. charge gas for method invoc
+	// 3. transfer optional funds
+	// 4. short-circuit _Send_ method
+	// 5. load target actor code
+	// 6. create target state handle
 	// assert from address is an ID address.
 	if ic.msg.from.Protocol() != address.ID {
 		panic("bad Exitcode: sender address MUST be an ID address at invocation time")
@@ -586,7 +641,10 @@ func (ic *invocationContext) invoke() (ret returnWrapper, errcode exitcode.ExitC
 	// Note: we replace the "to" address with the normalized version
 	ic.toActor, ic.msg.to = ic.resolveTarget(ic.msg.to)
 
-	// 3. transfer funds carried by the msg
+	// 3. charge gas for method invocation
+	ic.topLevel.chargeGas(ic.topLevel.gasPrices.OnMethodInvocation(ic.msg.value, ic.msg.method))
+
+	// 4. transfer funds carried by the msg
 	if !ic.msg.value.NilOrZero() {
 		if ic.msg.value.LessThan(big.Zero()) {
 			ic.Abortf(exitcode.SysErrForbidden, "attempt to transfer negative value %s from %s to %s",
@@ -599,13 +657,13 @@ func (ic *invocationContext) invoke() (ret returnWrapper, errcode exitcode.ExitC
 		ic.toActor, ic.fromActor = ic.rt.transfer(ic.msg.from, ic.msg.to, ic.msg.value)
 	}
 
-	// 4. if we are just sending funds, there is nothing else to do.
+	// 5. if we are just sending funds, there is nothing else to do.
 	if ic.msg.method == builtin.MethodSend {
 		ic.rt.endInvocation(exitcode.Ok, abi.Empty)
 		return returnWrapper{abi.Empty}, exitcode.Ok
 	}
 
-	// 5. load target actor code
+	// 6. load target actor code
 	actorImpl := ic.rt.getActorImpl(ic.toActor.Code)
 
 	// dispatch
@@ -758,6 +816,7 @@ func (ic *invocationContext) resolveTarget(target address.Address) (*states.Acto
 		newCtx := newInvocationContext(ic.rt, ic.topLevel, newMsg, nil, ic.emptyObject)
 		_, code := newCtx.invoke()
 
+		ic.topLevel.gasUsed = newCtx.topLevel.gasUsed
 		ic.stats.MergeSubStat(builtin.InitActorCodeID, builtin.MethodsAccount.Constructor, newCtx.stats)
 
 		if code.IsError() {
@@ -791,10 +850,7 @@ func (ic *invocationContext) replace(obj cbor.Marshaler) cid.Cid {
 	if !found {
 		ic.rt.Abortf(exitcode.ErrIllegalState, "failed to find actor %s for state", ic.msg.to)
 	}
-	c, err := ic.rt.store.Put(ic.rt.ctx, obj)
-	if err != nil {
-		ic.rt.Abortf(exitcode.ErrIllegalState, "could not save new state")
-	}
+	c := ic.StorePut(obj)
 	actr.Head = c
 	err = ic.rt.setActor(ic.rt.ctx, ic.msg.to, actr)
 	if err != nil {
