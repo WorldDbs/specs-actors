@@ -1,12 +1,4 @@
-# Filecoin actors
-[![CircleCI](https://circleci.com/gh/filecoin-project/specs-actors.svg?style=svg)](https://circleci.com/gh/filecoin-project/specs-actors)
-[![codecov](https://codecov.io/gh/filecoin-project/specs-actors/branch/master/graph/badge.svg)](https://codecov.io/gh/filecoin-project/specs-actors)
-[![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/github.com/filecoin-project/specs-actors)
-
-This repo is the specification of the Filecoin builtin actors, in the form of executable code.
-
-This is a companion to the rest of the [Filecoin Specification](https://github.com/filecoin-project/specs), 
-but also directly usable by Go implementations of Filecoin.
+# world database
 
 ## Versioning
 
@@ -29,4 +21,4 @@ Releases of this repo follow semantic versioning rules, with consideration of di
 ## License
 This repository is dual-licensed under Apache 2.0 and MIT terms.
 
-Copyright 2019-2020. Protocol Labs, Inc.
+Copyright 2019-2021. Protocol Labs, Inc.
